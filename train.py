@@ -20,8 +20,10 @@ from model import LSS_CAN_Mamba  # DO NOT CHANGE MODEL
 # =========================
 
 # change to the location of the preprocessed files 
-DATA_DIR = os.environ.get("DATA_DIR", "processed_data/set_01")
-OUT_DIR = os.environ.get("OUT_DIR", "outputs")
+# DATA_DIR = os.environ.get("DATA_DIR", "processed_data/set_01")
+# OUT_DIR = os.environ.get("OUT_DIR", "outputs")
+DATA_DIR = os.environ.get("DATA_DIR", "/workspace/data/processed_data/set_01")
+OUT_DIR  = os.environ.get("OUT_DIR",  "/workspace/checkpoints/set_01")
 MODEL_NAME = os.environ.get("MODEL_NAME", "lss_can_mamba")
 
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 64))
@@ -66,9 +68,28 @@ val_loader = get_loader(val_npz, shuffle=False)
 print(f"Data Loaded. Vocab Size: {vocab_size}")
 
 # 2. INIT MODEL (UNCHANGED)
+# 1. CALCULATE CLASS WEIGHTS
+# Count positives (Attacks) and negatives (Normal) in training labels
+y_train_indices = train_npz['labels'] # Assuming this is the label array
+num_normal = len(y_train_indices) - np.sum(y_train_indices)
+num_attacks = np.sum(y_train_indices)
+
+# Weight = Number of Negatives / Number of Positives
+# If normal packets are 10x more common, attacks get 10x weight
+pos_weight_val = num_normal / (num_attacks + 1e-6) # +1e-6 avoids division by zero
+print(f"Calculated Class Weight (Pos_Weight): {pos_weight_val:.2f}")
+
+# Convert to Tensor
+# Note: For CrossEntropyLoss with 2 classes, we usually use the 'weight' argument tensor([1.0, pos_weight])
+class_weights = torch.tensor([1.0, pos_weight_val], device=device)
+
+# 2. INIT MODEL
 model = LSS_CAN_Mamba(num_unique_ids=vocab_size).to(device)
-optimizer = optim.AdamW(model.parameters(), lr=LR)
-criterion = nn.CrossEntropyLoss()
+optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=0.05) # Increased weight_decay for regularization
+
+# 3. UPDATE LOSS FUNCTION
+# We pass the calculated weights here
+criterion = nn.CrossEntropyLoss(weight=class_weights)
 
 # 2.5 RESUME (NEW)
 start_epoch = 0
