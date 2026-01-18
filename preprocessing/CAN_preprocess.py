@@ -5,8 +5,12 @@ import glob
 from concurrent.futures import ProcessPoolExecutor
 
 # --- CONFIGURATION ---
-DATASET_ROOT = r"C:\Users\Jhosh\Desktop\CAN-LSS-Mamba\dataset\can-train-and-test-v1.5\set_01"
-OUTPUT_DIR = "processed_data/set_01"
+# DATASET_ROOT = r"C:\Users\Jhosh\Desktop\CAN-LSS-Mamba\dataset\can-train-and-test-v1.5\set_01"
+# OUTPUT_DIR = "processed_data/set_01"
+
+DATASET_ROOT = "/workspace/data/can-train-and-test-v1.5/set_01"
+OUTPUT_DIR = "/workspace/data/processed_data/set_01"
+
 WINDOW_SIZE = 64
 STRIDE = 64
 
