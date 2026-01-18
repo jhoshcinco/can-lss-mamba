@@ -19,6 +19,7 @@ from model import LSS_CAN_Mamba  # DO NOT CHANGE MODEL
 #  python train.py
 # =========================
 
+# change to the location of the preprocessed files 
 DATA_DIR = os.environ.get("DATA_DIR", "processed_data/set_01")
 OUT_DIR = os.environ.get("OUT_DIR", "outputs")
 MODEL_NAME = os.environ.get("MODEL_NAME", "lss_can_mamba")
