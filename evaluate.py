@@ -5,39 +5,47 @@ import numpy as np
 import pandas as pd
 import os
 import glob
-import gc  # Garbage Collector
-from sklearn.metrics import f1_score, accuracy_score, recall_score, precision_score
+import gc  # Added Garbage Collection
+from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
 from model import LSS_CAN_Mamba
 
-# --- CONFIG ---
+# --- MANUAL CONFIGURATION ---
+# UNCOMMENT THE FOLDER YOU WANT TO TEST RIGHT NOW:
+
+TARGET_SCENARIO = "test_01_known_vehicle_known_attack"
+# TARGET_SCENARIO = "test_02_unknown_vehicle_known_attack"
+# TARGET_SCENARIO = "test_03_known_vehicle_unknown_attack"
+# TARGET_SCENARIO = "test_04_unknown_vehicle_unknown_attack"
+# TARGET_SCENARIO = "test_05_suppress"
+# TARGET_SCENARIO = "test_06_masquerade"
+
+# ---------------------------
 DATASET_ROOT = r"/workspace/data/can-train-and-test-v1.5/set_01"
 MODEL_PATH = "/workspace/checkpoints/set_01/lss_can_mamba_best.pth"
 ID_MAP_PATH = "/workspace/data/processed_data/set_01/id_map.npy"
-BATCH_SIZE = 128  # Increased batch size for speed (safe because we process 1 file at a time)
+BATCH_SIZE = 64
 WINDOW_SIZE = 64
 STRIDE = 64
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-# --- HELPER FUNCTIONS ---
-def parse_csv_stream(file_path, id_map):
-    """ Reads CSV and returns processed arrays immediately """
+def parse_csv_for_inference(file_path, id_map):
     try:
         df = pd.read_csv(file_path)
         df.columns = df.columns.str.strip().str.lower()
 
-        # 1. Time
+        # 1. Time Delta (With NaN Safety Fix)
         df['timestamp'] = pd.to_numeric(df['timestamp'], errors='coerce')
         delta = df['timestamp'].diff().fillna(0).values
+        delta[delta < 0] = 0  # Fix negative time crashing Mamba
         delta_norm = np.log1p(delta + 1e-6).reshape(-1, 1)
 
         # 2. IDs
         id_col = 'arbitration_id'
-        unk_idx = id_map['<UNK>']
-
-        # Safe Hex Conversion
         df[id_col] = df[id_col].apply(
             lambda x: int(str(x), 16) if isinstance(x, str) and any(c.isalpha() for c in str(x)) else int(x))
+
+        unk_idx = id_map['<UNK>']
         ids = df[id_col].apply(lambda x: id_map.get(x, unk_idx)).values
 
         # 3. Payloads
@@ -48,105 +56,122 @@ def parse_csv_stream(file_path, id_map):
         payloads = np.array(df['data_field'].apply(split_payload).tolist()) / 255.0
 
         # 4. Labels
-        labels = df['attack'].apply(lambda x: 1 if str(x).upper() in ['1', 'T', 'ATTACK'] else 0).values
+        label_col = 'attack'
+        labels = df[label_col].apply(lambda x: 1 if str(x).upper() in ['1', 'T', 'ATTACK'] else 0).values
 
         return ids, payloads, delta_norm, labels
     except Exception as e:
+        print(f"Error reading {file_path}: {e}")
         return None
 
 
 def create_windows(ids, payloads, deltas, labels):
     X_ids, X_feats, y = [], [], []
-    # Vectorized windowing would be faster, but loop is safer for memory
     for i in range(0, len(ids) - WINDOW_SIZE, STRIDE):
-        X_ids.append(ids[i:i + WINDOW_SIZE])
-        # Combine payload + delta
-        feat = np.concatenate([payloads[i:i + WINDOW_SIZE], deltas[i:i + WINDOW_SIZE]], axis=-1)
-        X_feats.append(feat)
-        y.append(1 if np.any(labels[i:i + WINDOW_SIZE] == 1) else 0)
+        w_id = ids[i:i + WINDOW_SIZE]
+        w_pay = payloads[i:i + WINDOW_SIZE]
+        w_time = deltas[i:i + WINDOW_SIZE]
+        w_lbl = labels[i:i + WINDOW_SIZE]
+
+        w_feat = np.concatenate([w_pay, w_time], axis=-1)
+
+        X_ids.append(w_id)
+        X_feats.append(w_feat)
+        y.append(1 if np.any(w_lbl == 1) else 0)
 
     return np.array(X_ids), np.array(X_feats), np.array(y)
 
 
-# --- MAIN LOOP ---
 def evaluate():
-    print(f"Loading Resources on {DEVICE}...")
+    print(f"--- RUNNING MANUAL EVAL ON: {TARGET_SCENARIO} ---")
 
-    # Load Map & Model
+    # 1. Load Map
     id_map = np.load(ID_MAP_PATH, allow_pickle=True).item()
-    vocab_size = len(id_map) + 1  # Ensure this matches training!
 
+    # CRITICAL FIX: Ensure Vocab Size covers <UNK> to prevent Index Error Crash
+    max_id = max(id_map.values())
+    vocab_size = max_id + 2
+
+    # 2. Load Model
     model = LSS_CAN_Mamba(num_unique_ids=vocab_size).to(DEVICE)
-    # Load weights safely
-    state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
+
+    # Handle vocab mismatch safely
+    state_dict = torch.load(MODEL_PATH)
+    saved_vocab = state_dict['id_embedding.weight'].shape[0]
+    if saved_vocab != vocab_size:
+        print(f"Adjusting vocab from {vocab_size} to {saved_vocab}")
+        model = LSS_CAN_Mamba(num_unique_ids=saved_vocab).to(DEVICE)
+
     model.load_state_dict(state_dict)
     model.eval()
 
-    test_folders = sorted(glob.glob(os.path.join(DATASET_ROOT, "test_*")))
+    # 3. Target Specific Folder
+    target_path = os.path.join(DATASET_ROOT, TARGET_SCENARIO)
+    csv_files = glob.glob(os.path.join(target_path, "*.csv"))
 
-    print(f"\n{'=' * 75}")
-    print(f"{'TEST SCENARIO':<40} | {'F1':<8} | {'ACC':<8} | {'PREC':<8} | {'REC':<8}")
-    print(f"{'=' * 75}")
+    if not csv_files:
+        print(f"No files found in {target_path}")
+        return
 
-    results = []
+    # Process all files
+    all_ids, all_feats, all_labels = [], [], []
 
-    for folder in test_folders:
-        folder_name = os.path.basename(folder)
-        csv_files = glob.glob(os.path.join(folder, "*.csv"))
-
-        if not csv_files:
-            continue
-
-        # Accumulators for the WHOLE FOLDER
-        y_true_all = []
-        y_pred_all = []
-
-        for f in csv_files:
-            # 1. Process Single File
-            res = parse_csv_stream(f, id_map)
-            if res is None: continue
-
+    for f in csv_files:
+        print(f"Processing {os.path.basename(f)}...")
+        res = parse_csv_for_inference(f, id_map)
+        if res:
             ids, pay, time, lbl = res
             w_ids, w_feats, w_lbl = create_windows(ids, pay, time, lbl)
+            if len(w_ids) > 0:
+                all_ids.append(w_ids)
+                all_feats.append(w_feats)
+                all_labels.append(w_lbl)
 
-            if len(w_ids) == 0: continue
+        # Free memory per file
+        del ids, pay, time, lbl, w_ids, w_feats, w_lbl
+        gc.collect()
 
-            # 2. Run Inference Immediately
-            x_ids_t = torch.LongTensor(w_ids).to(DEVICE)
-            x_feats_t = torch.FloatTensor(w_feats).to(DEVICE)
+    if not all_ids:
+        print("NO DATA EXTRACTED.")
+        return
 
-            dataset = TensorDataset(x_ids_t, x_feats_t)
-            loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
+    print("Converting to Tensor (This may take RAM)...")
+    x_ids = torch.LongTensor(np.concatenate(all_ids)).to(DEVICE)
+    x_feats = torch.FloatTensor(np.concatenate(all_feats)).to(DEVICE)
+    y_true = np.concatenate(all_labels)
 
-            with torch.no_grad():
-                for batch_ids, batch_feats in loader:
-                    logits = model(batch_ids, batch_feats)
-                    preds = torch.argmax(logits, dim=1).cpu().numpy()
+    # Clean RAM
+    del all_ids, all_feats, all_labels
+    gc.collect()
 
-                    y_pred_all.extend(preds)
+    print("Running Inference...")
+    dataset = TensorDataset(x_ids, x_feats)
+    loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-            # Save True Labels
-            y_true_all.extend(w_lbl)
+    y_pred = []
+    with torch.no_grad():
+        for batch_ids, batch_feats in loader:
+            logits = model(batch_ids, batch_feats)
+            preds = torch.argmax(logits, dim=1).cpu().numpy()
+            y_pred.extend(preds)
 
-            # 3. MEMORY CLEANUP
-            del w_ids, w_feats, w_lbl, x_ids_t, x_feats_t, dataset, loader
-            gc.collect()  # Force RAM release
+    # Metrics
+    f1 = f1_score(y_true, y_pred, zero_division=0)
+    acc = accuracy_score(y_true, y_pred)
+    rec = recall_score(y_true, y_pred, zero_division=0)
+    prec = precision_score(y_true, y_pred, zero_division=0)
 
-        # 4. Calculate Folder Metrics
-        if len(y_true_all) > 0:
-            f1 = f1_score(y_true_all, y_pred_all, zero_division=0)
-            acc = accuracy_score(y_true_all, y_pred_all)
-            prec = precision_score(y_true_all, y_pred_all, zero_division=0)
-            rec = recall_score(y_true_all, y_pred_all, zero_division=0)
+    print(f"\nRESULT: {TARGET_SCENARIO}")
+    print(f"F1: {f1:.4f} | Acc: {acc:.4f} | Rec: {rec:.4f} | Prec: {prec:.4f}")
 
-            print(f"{folder_name:<40} | {f1:.4f}   | {acc:.4f}   | {prec:.4f}   | {rec:.4f}")
-            results.append({'Scenario': folder_name, 'F1': f1, 'Acc': acc, 'Precision': prec, 'Recall': rec})
-        else:
-            print(f"{folder_name:<40} | NO DATA (Check Window Size)")
+    # SAVE TO CSV (APPEND MODE)
+    results = [{'Scenario': TARGET_SCENARIO, 'F1': f1, 'Acc': acc, 'Recall': rec, 'Precision': prec}]
+    df_res = pd.DataFrame(results)
 
-    print(f"{'=' * 75}")
-    pd.DataFrame(results).to_csv("thesis_final_results.csv", index=False)
-    print("Results saved to thesis_final_results.csv")
+    # Append if file exists, write header if not
+    use_header = not os.path.exists("thesis_results_manual.csv")
+    df_res.to_csv("thesis_results_manual.csv", mode='a', header=use_header, index=False)
+    print(">>> Saved to thesis_results_manual.csv")
 
 
 if __name__ == "__main__":
