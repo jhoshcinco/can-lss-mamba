@@ -1,153 +1,202 @@
-import torch
-import torch.nn as nn
-from torch.utils.data import TensorDataset, DataLoader
-import numpy as np
-import pandas as pd
 import os
 import glob
-import gc  # Garbage Collector
-from sklearn.metrics import f1_score, accuracy_score, recall_score, precision_score
+import gc
+import torch
+import numpy as np
+import pandas as pd
+from torch.utils.data import TensorDataset, DataLoader
 from model import LSS_CAN_Mamba
 
-# --- CONFIG ---
+# --- CONFIGURATION ---
 DATASET_ROOT = r"/workspace/data/can-train-and-test-v1.5/set_01"
 MODEL_PATH = "/workspace/checkpoints/set_01/lss_can_mamba_best.pth"
 ID_MAP_PATH = "/workspace/data/processed_data/set_01/id_map.npy"
-BATCH_SIZE = 128  # Increased batch size for speed (safe because we process 1 file at a time)
+OUTPUT_CSV = "/workspace/final_thesis_results.csv"
+
+BATCH_SIZE = 128
 WINDOW_SIZE = 64
 STRIDE = 64
+CHUNK_WINDOWS = 20000
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-# --- HELPER FUNCTIONS ---
-def parse_csv_stream(file_path, id_map):
-    """ Reads CSV and returns processed arrays immediately """
+def parse_csv_exact_match(file_path, id_map):
+    """
+    EXACT REPLICATION of your training preprocessing logic.
+    Includes safety for Fuzzing/Garbage data in test sets.
+    """
+    # 1. Read Data (Optimized for speed/memory)
+    cols = ["timestamp", "arbitration_id", "data_field", "attack"]
+    dtypes = {"timestamp": "float64", "arbitration_id": "string", "data_field": "string", "attack": "string"}
+
     try:
-        df = pd.read_csv(file_path)
-        df.columns = df.columns.str.strip().str.lower()
+        df = pd.read_csv(file_path, usecols=cols, dtype=dtypes, on_bad_lines="skip", engine="c")
+    except:
+        df = pd.read_csv(file_path, usecols=cols, dtype=dtypes, on_bad_lines="skip", engine="python")
 
-        # 1. Time
-        df['timestamp'] = pd.to_numeric(df['timestamp'], errors='coerce')
-        delta = df['timestamp'].diff().fillna(0).values
-        delta_norm = np.log1p(delta + 1e-6).reshape(-1, 1)
+    df.columns = df.columns.str.strip().str.lower()
+    unk_idx = id_map["<UNK>"]
 
-        # 2. IDs
-        id_col = 'arbitration_id'
-        unk_idx = id_map['<UNK>']
+    # 2. Process Time Delta (Matches: log1p(delta + 1e-6))
+    ts = pd.to_numeric(df["timestamp"], errors="coerce").fillna(0.0).astype(np.float32).values
+    delta = np.diff(ts, prepend=ts[0]).astype(np.float32)
+    delta[delta < 0] = 0  # Safety for bad timestamps
+    delta_norm = np.log1p(delta + 1e-6).astype(np.float32).reshape(-1, 1)
 
-        # Safe Hex Conversion
-        df[id_col] = df[id_col].apply(
-            lambda x: int(str(x), 16) if isinstance(x, str) and any(c.isalpha() for c in str(x)) else int(x))
-        ids = df[id_col].apply(lambda x: id_map.get(x, unk_idx)).values
+    # 3. Process IDs (Matches: Hybrid Hex/Int logic)
+    def safe_id_convert(x):
+        try:
+            s = str(x).strip()
+            # Fuzzing Protection
+            if s.lower() in ["na", "nan", "null", ""]: return -1
 
-        # 3. Payloads
-        def split_payload(hex_str):
-            hex_str = str(hex_str).strip().ljust(16, '0')
-            return [int(hex_str[i:i + 2], 16) for i in range(0, 16, 2)]
+            # --- EXACT LOGIC FROM YOUR PREPROCESS.PY ---
+            # "int(str(x), 16) if ... any(c.isalpha()...) else int(x)"
+            if any(c.isalpha() for c in s):
+                return int(s, 16)
+            else:
+                return int(float(s))
+                # -------------------------------------------
+        except:
+            return -1
 
-        payloads = np.array(df['data_field'].apply(split_payload).tolist()) / 255.0
+    arb = df["arbitration_id"].apply(safe_id_convert).to_numpy()
+    ids = np.array([id_map.get(v, unk_idx) if v != -1 else unk_idx for v in arb], dtype=np.int64)
 
-        # 4. Labels
-        labels = df['attack'].apply(lambda x: 1 if str(x).upper() in ['1', 'T', 'ATTACK'] else 0).values
+    # 4. Process Payloads (Matches: split_payload / 255.0)
+    def split_payload(hex_str):
+        try:
+            s = str(hex_str).strip()
+            if s.lower() in ["na", "nan", ""]: s = "00" * 8
+            s = s.ljust(16, "0")[:16]
+            return [int(s[i:i + 2], 16) for i in range(0, 16, 2)]
+        except:
+            return [0] * 8
 
-        return ids, payloads, delta_norm, labels
-    except Exception as e:
-        return None
+    # Fast Stack
+    payloads = np.stack(df["data_field"].apply(split_payload).to_numpy()).astype(np.uint8)
+    payloads = (payloads.astype(np.float32) / 255.0)
+
+    # 5. Process Labels
+    labels = df["attack"].astype(str).str.upper().isin(["1", "T", "ATTACK"]).astype(np.int64).values
+
+    return ids, payloads, delta_norm, labels
 
 
-def create_windows(ids, payloads, deltas, labels):
-    X_ids, X_feats, y = [], [], []
-    # Vectorized windowing would be faster, but loop is safer for memory
-    for i in range(0, len(ids) - WINDOW_SIZE, STRIDE):
-        X_ids.append(ids[i:i + WINDOW_SIZE])
-        # Combine payload + delta
-        feat = np.concatenate([payloads[i:i + WINDOW_SIZE], deltas[i:i + WINDOW_SIZE]], axis=-1)
-        X_feats.append(feat)
-        y.append(1 if np.any(labels[i:i + WINDOW_SIZE] == 1) else 0)
+def iter_windows_chunked(ids, payloads, deltas, labels, window=64, stride=64, chunk_windows=20000):
+    n = len(ids)
+    start = 0
+    while start + window <= n:
+        max_w = ((n - window - start) // stride) + 1
+        if max_w <= 0: break
 
-    return np.array(X_ids), np.array(X_feats), np.array(y)
+        w_count = min(chunk_windows, max_w)
+
+        base = start + np.arange(w_count, dtype=np.int64) * stride
+        idx = base[:, None] + np.arange(window, dtype=np.int64)[None, :]
+
+        w_feats = np.concatenate([payloads[idx], deltas[idx]], axis=-1).astype(np.float32)
+        y = np.any(labels[idx] == 1, axis=1).astype(np.int64)
+
+        yield ids[idx], w_feats, y
+
+        start += w_count * stride
 
 
-# --- MAIN LOOP ---
-def evaluate():
-    print(f"Loading Resources on {DEVICE}...")
+def evaluate_all():
+    print(f"--- STARTING FULL EVALUATION ---")
+    print(f"Device: {DEVICE}")
 
-    # Load Map & Model
+    # 1. Load Resources
     id_map = np.load(ID_MAP_PATH, allow_pickle=True).item()
-    vocab_size = len(id_map) + 1  # Ensure this matches training!
+    max_id = max(id_map.values())
+    vocab_size = max_id + 2
+
+    # 2. Load Model
+    state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
+    saved_vocab = state_dict["id_embedding.weight"].shape[0]
+    if saved_vocab != vocab_size: vocab_size = saved_vocab
 
     model = LSS_CAN_Mamba(num_unique_ids=vocab_size).to(DEVICE)
-    # Load weights safely
-    state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
     model.load_state_dict(state_dict)
     model.eval()
 
+    # 3. Find All Test Folders
     test_folders = sorted(glob.glob(os.path.join(DATASET_ROOT, "test_*")))
+    print(f"Found {len(test_folders)} test scenarios.")
 
-    print(f"\n{'=' * 75}")
-    print(f"{'TEST SCENARIO':<40} | {'F1':<8} | {'ACC':<8} | {'PREC':<8} | {'REC':<8}")
-    print(f"{'=' * 75}")
+    results_list = []
 
-    results = []
-
+    # 4. Main Loop
     for folder in test_folders:
-        folder_name = os.path.basename(folder)
-        csv_files = glob.glob(os.path.join(folder, "*.csv"))
+        scenario_name = os.path.basename(folder)
+        print(f"\n>>> PROCESSING: {scenario_name}")
 
-        if not csv_files:
-            continue
-
-        # Accumulators for the WHOLE FOLDER
-        y_true_all = []
-        y_pred_all = []
+        csv_files = sorted(glob.glob(os.path.join(folder, "*.csv")))
+        tp = fp = fn = tn = 0
 
         for f in csv_files:
-            # 1. Process Single File
-            res = parse_csv_stream(f, id_map)
-            if res is None: continue
+            print(f"   Reading {os.path.basename(f)}...", end="\r")
+            try:
+                ids, pay, time_d, lbl = parse_csv_exact_match(f, id_map)
+            except Exception as e:
+                print(f"   [Skipping corrupt file: {e}]")
+                continue
 
-            ids, pay, time, lbl = res
-            w_ids, w_feats, w_lbl = create_windows(ids, pay, time, lbl)
+            # Process in Chunks (RAM Safe)
+            for w_ids, w_feats, y_true in iter_windows_chunked(ids, pay, time_d, lbl, WINDOW_SIZE, STRIDE,
+                                                               CHUNK_WINDOWS):
+                dataset = TensorDataset(torch.from_numpy(w_ids), torch.from_numpy(w_feats))
+                loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-            if len(w_ids) == 0: continue
+                with torch.no_grad():
+                    offset = 0
+                    for batch_ids, batch_feats in loader:
+                        batch_ids, batch_feats = batch_ids.to(DEVICE), batch_feats.to(DEVICE)
+                        preds = torch.argmax(model(batch_ids, batch_feats), dim=1).cpu().numpy()
 
-            # 2. Run Inference Immediately
-            x_ids_t = torch.LongTensor(w_ids).to(DEVICE)
-            x_feats_t = torch.FloatTensor(w_feats).to(DEVICE)
+                        y_batch = y_true[offset:offset + len(preds)]
+                        offset += len(preds)
 
-            dataset = TensorDataset(x_ids_t, x_feats_t)
-            loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
+                        tp += np.sum((preds == 1) & (y_batch == 1))
+                        tn += np.sum((preds == 0) & (y_batch == 0))
+                        fp += np.sum((preds == 1) & (y_batch == 0))
+                        fn += np.sum((preds == 0) & (y_batch == 1))
 
-            with torch.no_grad():
-                for batch_ids, batch_feats in loader:
-                    logits = model(batch_ids, batch_feats)
-                    preds = torch.argmax(logits, dim=1).cpu().numpy()
+                del dataset, loader
+                gc.collect()
 
-                    y_pred_all.extend(preds)
+            del ids, pay, time_d, lbl
+            gc.collect()
 
-            # Save True Labels
-            y_true_all.extend(w_lbl)
+        # Calculate Metrics for this Scenario
+        total = tp + tn + fp + fn
+        if total > 0:
+            precision = tp / (tp + fp + 1e-6)
+            recall = tp / (tp + fn + 1e-6)
+            f1 = 2 * precision * recall / (precision + recall + 1e-6)
+            acc = (tp + tn) / (total + 1e-6)
 
-            # 3. MEMORY CLEANUP
-            del w_ids, w_feats, w_lbl, x_ids_t, x_feats_t, dataset, loader
-            gc.collect()  # Force RAM release
+            print(f"\n   [RESULT] F1: {f1:.4f} | Acc: {acc:.4f} | Rec: {recall:.4f}")
 
-        # 4. Calculate Folder Metrics
-        if len(y_true_all) > 0:
-            f1 = f1_score(y_true_all, y_pred_all, zero_division=0)
-            acc = accuracy_score(y_true_all, y_pred_all)
-            prec = precision_score(y_true_all, y_pred_all, zero_division=0)
-            rec = recall_score(y_true_all, y_pred_all, zero_division=0)
+            results_list.append({
+                "Scenario": scenario_name,
+                "F1_Score": f1,
+                "Accuracy": acc,
+                "Precision": precision,
+                "Recall": recall,
+                "TP": tp, "FP": fp, "TN": tn, "FN": fn
+            })
 
-            print(f"{folder_name:<40} | {f1:.4f}   | {acc:.4f}   | {prec:.4f}   | {rec:.4f}")
-            results.append({'Scenario': folder_name, 'F1': f1, 'Acc': acc, 'Precision': prec, 'Recall': rec})
+            # Save Intermediate (Safety measure)
+            pd.DataFrame(results_list).to_csv(OUTPUT_CSV, index=False)
         else:
-            print(f"{folder_name:<40} | NO DATA (Check Window Size)")
+            print("\n   [WARNING] No valid data processed for this folder.")
 
-    print(f"{'=' * 75}")
-    pd.DataFrame(results).to_csv("thesis_final_results.csv", index=False)
-    print("Results saved to thesis_final_results.csv")
+    print(f"\n{'=' * 60}")
+    print(f"Evaluation Complete. Results saved to: {OUTPUT_CSV}")
+    print(f"{'=' * 60}")
 
 
 if __name__ == "__main__":
-    evaluate()
+    evaluate_all()
