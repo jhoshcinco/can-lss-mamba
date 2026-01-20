@@ -22,7 +22,7 @@ from model import LSS_CAN_Mamba  # DO NOT CHANGE MODEL
 # change to the location of the preprocessed files 
 # DATA_DIR = os.environ.get("DATA_DIR", "processed_data/set_01")
 # OUT_DIR = os.environ.get("OUT_DIR", "outputs")
-DATA_DIR = os.environ.get("DATA_DIR", "/workspace/data/processed_data/set_01")
+DATA_DIR = os.environ.get("DATA_DIR", "/workspace/data/processed_data/set_01_run_02")
 OUT_DIR  = os.environ.get("OUT_DIR",  "/workspace/checkpoints/set_01")
 MODEL_NAME = os.environ.get("MODEL_NAME", "lss_can_mamba")
 
@@ -53,6 +53,16 @@ id_map = np.load(os.path.join(DATA_DIR, "id_map.npy"), allow_pickle=True).item()
 # check if <UNK> exists in id map
 vocab_size = len(id_map)
 # preprocessing already includes <UNK>
+
+# this will choose the best threshold based on F1 score
+def best_f1_threshold(y_true, p_attack):
+    best_t, best_f1 = 0.5, -1.0
+    for t in np.linspace(0.01, 0.99, 99):
+        y_pred = (p_attack >= t).astype(int)
+        f1 = f1_score(y_true, y_pred, zero_division=0)
+        if f1 > best_f1:
+            best_f1, best_t = f1, t
+    return best_t, best_f1
 
 
 def get_loader(npz, shuffle=True):
@@ -136,20 +146,19 @@ for epoch in range(start_epoch, EPOCHS):
         for ids, feats, labels in val_loader:
             ids, feats, labels = ids.to(device), feats.to(device), labels.to(device)
             logits = model(ids, feats)
-            preds = torch.argmax(logits, dim=1)
-            all_preds.extend(preds.cpu().numpy())
+            probs = torch.softmax(logits, dim=1)[:, 1]
+            all_preds.extend(probs.cpu().numpy())  # store probabilities
             all_labels.extend(labels.cpu().numpy())
 
     # Metrics
-    val_f1 = f1_score(all_labels, all_preds, zero_division=0)
-    val_acc = accuracy_score(all_labels, all_preds)
+    p_attack = np.array(all_preds)
+    y_true = np.array(all_labels)
+
+    best_t, val_f1 = best_f1_threshold(y_true, p_attack)
+    val_acc = accuracy_score(y_true, (p_attack >= best_t).astype(int))
 
     print(
-        f"Epoch {epoch + 1} | "
-        f"Loss: {train_loss / len(train_loader):.4f} | "
-        f"Val F1: {val_f1:.4f} | Val Acc: {val_acc:.4f} | "
-        f"Time: {time.time() - start:.1f}s"
-    )
+        f"Epoch {epoch + 1} | Loss: ... | Val F1: {val_f1:.4f} | Val Acc: {val_acc:.4f} | Thr: {best_t:.2f} | Time: ...")
 
     # Save best
     if val_f1 > best_f1:
