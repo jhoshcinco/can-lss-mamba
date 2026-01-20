@@ -251,18 +251,30 @@ for epoch in range(start_epoch, EPOCHS):
     )
 
     # === WARNING: Detect suspicious threshold behavior ===
-    if best_t < 0.05:
-        print(f"⚠️  WARNING: Threshold = {best_t:.4f} is extremely low!")
-        print(f"    This means the model classifies almost everything as attack.")
-        print(f"    Possible causes:")
-        print(f"    1. Severe class imbalance (attack rate: {val_attack_rate:.4f})")
-        print(f"    2. Poor probability calibration (check separation above)")
-        print(f"    3. Model not learning meaningful patterns")
-        print(f"    Consider: Fβ score (β=0.5), PR-AUC, or constrained threshold range")
+    # Calculate expected threshold range based on attack rate (Bayes optimal)
+    # threshold ≈ log(P(attack) / (1-P(attack))) for balanced cost
+    import math
+    expected_threshold = math.log(val_attack_rate / (1 - val_attack_rate)) if 0 < val_attack_rate < 1 else 0.5
+    expected_threshold = 1.0 / (1.0 + math.exp(-expected_threshold))  # Convert to probability scale
+
+    # Check if separation is poor (indicates non-learning)
+    separation = p_attacks.mean() - p_normal.mean()
+
+    # Only warn if BOTH low threshold AND poor separation
+    if best_t < 0.01 and separation < 0.05:
+        print(f"🔴 CRITICAL: Threshold = {best_t:.4f} AND Separation = {separation:.4f} (very low)")
+        print(f"    Model is NOT learning - attack/normal probabilities overlap almost completely")
+        print(f"    Actions:")
+        print(f"    1. Increase model capacity (d_model=256 in model.py)")
+        print(f"    2. Train for more epochs")
+        print(f"    3. Check data quality and labels")
+    elif best_t < 0.01 and separation > 0.08:
+        print(f"✅ INFO: Threshold = {best_t:.4f} is low but EXPECTED")
+        print(f"    Separation = {separation:.4f} indicates model learning well")
+        print(f"    Low threshold is correct for attack rate = {val_attack_rate*100:.2f}%")
     elif best_t > 0.95:
         print(f"⚠️  WARNING: Threshold = {best_t:.4f} is extremely high!")
-        print(f"    This means the model rarely predicts attacks.")
-        print(f"    The model may be biased toward the majority class.")
+        print(f"    The model rarely predicts attacks (may be biased toward majority class)")
 
     # Save best
     if val_f1 > best_f1:
