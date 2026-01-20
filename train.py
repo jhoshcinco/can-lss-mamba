@@ -158,7 +158,12 @@ for epoch in range(start_epoch, EPOCHS):
     val_acc = accuracy_score(y_true, (p_attack >= best_t).astype(int))
 
     print(
-        f"Epoch {epoch + 1} | Loss: ... | Val F1: {val_f1:.4f} | Val Acc: {val_acc:.4f} | Thr: {best_t:.2f} | Time: ...")
+        f"Epoch {epoch + 1} | "
+        f"Loss: {train_loss / len(train_loader):.4f} | "
+        f"Val F1: {val_f1:.4f} | Val Acc: {val_acc:.4f} | "
+        f"Thr: {best_t:.2f} | "
+        f"Time: {time.time() - start:.1f}s"
+    )
 
     # Save best
     if val_f1 > best_f1:
