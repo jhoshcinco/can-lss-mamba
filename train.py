@@ -26,10 +26,11 @@ DATA_DIR = os.environ.get("DATA_DIR", "/workspace/data/processed_data/set_01_run
 OUT_DIR  = os.environ.get("OUT_DIR",  "/workspace/checkpoints/set_01")
 MODEL_NAME = os.environ.get("MODEL_NAME", "lss_can_mamba")
 
-BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 64))
-EPOCHS = int(os.environ.get("EPOCHS", 50))
+BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 32))
+EPOCHS = int(os.environ.get("EPOCHS", 20))
 LR = float(os.environ.get("LR", 1e-4))
 ID_DROPOUT_PROB = float(os.environ.get("ID_DROPOUT_PROB", 0.00))  # Disabled - baseline performs best
+EARLY_STOP_PATIENCE = int(os.environ.get("EARLY_STOP_PATIENCE", 10))  # Stop if no improvement for N epochs
 
 os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -174,6 +175,7 @@ scheduler = OneCycleLR(
 start_epoch = 0
 best_f1 = 0.0
 best_threshold = 0.5  # Initialize best threshold
+epochs_without_improvement = 0  # Early stopping counter
 
 if os.path.exists(LAST_PATH):
     print("Found last checkpoint. Resuming...")
@@ -183,6 +185,7 @@ if os.path.exists(LAST_PATH):
     start_epoch = int(ckpt.get("epoch", -1)) + 1
     best_f1 = float(ckpt.get("best_f1", 0.0))
     best_threshold = float(ckpt.get("best_threshold", 0.5))
+    epochs_without_improvement = int(ckpt.get("epochs_without_improvement", 0))
     print(f"Resumed at epoch {start_epoch} with best_f1={best_f1:.4f}, threshold={best_threshold:.4f}")
 else:
     print("No last checkpoint found. Starting fresh.")
@@ -291,8 +294,15 @@ for epoch in range(start_epoch, EPOCHS):
     if val_f1 > best_f1:
         best_f1 = val_f1
         best_threshold = best_t  # Update best threshold
+        epochs_without_improvement = 0  # Reset counter
         torch.save(model.state_dict(), MODEL_PATH)
         print(f">>> Best model saved! (F1={best_f1:.4f}, Threshold={best_threshold:.4f})")
+    else:
+        epochs_without_improvement += 1
+        if epochs_without_improvement >= EARLY_STOP_PATIENCE:
+            print(f"\n🛑 Early stopping triggered! No improvement for {EARLY_STOP_PATIENCE} epochs.")
+            print(f"   Best F1: {best_f1:.4f} (Threshold: {best_threshold:.4f})")
+            break
 
     # Always save "last" checkpoint for continuity (NEW)
     torch.save(
@@ -300,6 +310,7 @@ for epoch in range(start_epoch, EPOCHS):
             "epoch": epoch,
             "best_f1": best_f1,
             "best_threshold": best_threshold,  # Save threshold
+            "epochs_without_improvement": epochs_without_improvement,
             "model": model.state_dict(),
             "optim": optimizer.state_dict(),
         },
