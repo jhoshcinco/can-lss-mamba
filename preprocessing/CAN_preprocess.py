@@ -132,6 +132,9 @@ def run_pipeline():
         return
 
     # CHRONOLOGICAL SPLIT (Three Bucket Rule)
+    # Bucket #1 (80%): Training data → learn model parameters
+    # Bucket #2 (20%): Validation data → model selection + threshold tuning
+    # Bucket #3 (separate test_* folders): Final evaluation (handled by evaluate.py)
     split_idx = int(len(all_files) * 0.8)
     train_files = all_files[:split_idx]
     val_files = all_files[split_idx:]

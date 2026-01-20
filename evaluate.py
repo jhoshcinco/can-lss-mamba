@@ -7,9 +7,21 @@ import pandas as pd
 from torch.utils.data import TensorDataset, DataLoader
 from model import LSS_CAN_Mamba
 
+# =========================
+# THREE-BUCKET EVALUATION STRATEGY
+# =========================
+# 1. TRAINING SET (train_02_with_attacks - 80%): Model parameter learning
+# 2. VALIDATION SET (train_02_with_attacks - 20%): Model selection + Threshold tuning
+# 3. TEST SETS (test_* folders): Final unbiased evaluation on unseen attack scenarios
+#
+# This script evaluates on bucket #3 (test sets) using the threshold learned from bucket #2.
+# This ensures NO DATA LEAKAGE and proper generalization assessment.
+# =========================
+
 # --- CONFIGURATION ---
 DATASET_ROOT = r"/workspace/data/can-train-and-test-v1.5/set_01"
 MODEL_PATH = "/workspace/checkpoints/set_01/lss_can_mamba_best.pth"
+CHECKPOINT_PATH = "/workspace/checkpoints/set_01/lss_can_mamba_last.pth"  # For threshold
 ID_MAP_PATH = "/workspace/data/processed_data/set_01/id_map.npy"
 OUTPUT_CSV = "/workspace/final_thesis_results.csv"
 
@@ -18,6 +30,7 @@ WINDOW_SIZE = 64
 STRIDE = 64
 CHUNK_WINDOWS = 20000
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEFAULT_THRESHOLD = 0.5  # Fallback if no checkpoint found
 
 
 def parse_csv_exact_match(file_path, id_map):
@@ -112,7 +125,7 @@ def evaluate_all():
     max_id = max(id_map.values())
     vocab_size = max_id + 2
 
-    # 2. Load Model
+    # 2. Load Model and Optimal Threshold
     state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
     saved_vocab = state_dict["id_embedding.weight"].shape[0]
     if saved_vocab != vocab_size: vocab_size = saved_vocab
@@ -120,6 +133,15 @@ def evaluate_all():
     model = LSS_CAN_Mamba(num_unique_ids=vocab_size).to(DEVICE)
     model.load_state_dict(state_dict)
     model.eval()
+
+    # Load optimal threshold from checkpoint
+    optimal_threshold = DEFAULT_THRESHOLD
+    if os.path.exists(CHECKPOINT_PATH):
+        ckpt = torch.load(CHECKPOINT_PATH, map_location="cpu")
+        optimal_threshold = float(ckpt.get("best_threshold", DEFAULT_THRESHOLD))
+        print(f"Loaded optimal threshold: {optimal_threshold:.4f}")
+    else:
+        print(f"No checkpoint found. Using default threshold: {optimal_threshold:.4f}")
 
     # 3. Find All Test Folders
     test_folders = sorted(glob.glob(os.path.join(DATASET_ROOT, "test_*")))
@@ -153,7 +175,9 @@ def evaluate_all():
                     offset = 0
                     for batch_ids, batch_feats in loader:
                         batch_ids, batch_feats = batch_ids.to(DEVICE), batch_feats.to(DEVICE)
-                        preds = torch.argmax(model(batch_ids, batch_feats), dim=1).cpu().numpy()
+                        logits = model(batch_ids, batch_feats)
+                        probs = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()  # Get attack probabilities
+                        preds = (probs >= optimal_threshold).astype(int)  # Apply optimal threshold
 
                         y_batch = y_true[offset:offset + len(preds)]
                         offset += len(preds)

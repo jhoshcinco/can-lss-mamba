@@ -109,6 +109,7 @@ criterion = nn.CrossEntropyLoss(weight=class_weights)
 # 2.5 RESUME (NEW)
 start_epoch = 0
 best_f1 = 0.0
+best_threshold = 0.5  # Initialize best threshold
 
 if os.path.exists(LAST_PATH):
     print("Found last checkpoint. Resuming...")
@@ -117,7 +118,8 @@ if os.path.exists(LAST_PATH):
     optimizer.load_state_dict(ckpt["optim"])
     start_epoch = int(ckpt.get("epoch", -1)) + 1
     best_f1 = float(ckpt.get("best_f1", 0.0))
-    print(f"Resumed at epoch {start_epoch} with best_f1={best_f1:.4f}")
+    best_threshold = float(ckpt.get("best_threshold", 0.5))
+    print(f"Resumed at epoch {start_epoch} with best_f1={best_f1:.4f}, threshold={best_threshold:.4f}")
 else:
     print("No last checkpoint found. Starting fresh.")
 
@@ -154,6 +156,11 @@ for epoch in range(start_epoch, EPOCHS):
     p_attack = np.array(all_preds)
     y_true = np.array(all_labels)
 
+    # Find optimal threshold on validation set
+    # Note: In three-bucket approach, this validation set is used for:
+    # 1. Model selection (best epoch)
+    # 2. Threshold tuning
+    # Final testing is done on separate test_* folders (evaluate.py)
     best_t, val_f1 = best_f1_threshold(y_true, p_attack)
     val_acc = accuracy_score(y_true, (p_attack >= best_t).astype(int))
 
@@ -168,14 +175,16 @@ for epoch in range(start_epoch, EPOCHS):
     # Save best
     if val_f1 > best_f1:
         best_f1 = val_f1
+        best_threshold = best_t  # Update best threshold
         torch.save(model.state_dict(), MODEL_PATH)
-        print(">>> Best model saved!")
+        print(f">>> Best model saved! (F1={best_f1:.4f}, Threshold={best_threshold:.4f})")
 
     # Always save "last" checkpoint for continuity (NEW)
     torch.save(
         {
             "epoch": epoch,
             "best_f1": best_f1,
+            "best_threshold": best_threshold,  # Save threshold
             "model": model.state_dict(),
             "optim": optimizer.state_dict(),
         },
@@ -183,4 +192,4 @@ for epoch in range(start_epoch, EPOCHS):
     )
     print(">>> Last checkpoint saved.")
 
-print(f"Done. Best F1: {best_f1:.4f}")
+print(f"Done. Best F1: {best_f1:.4f} | Best Threshold: {best_threshold:.4f}")
