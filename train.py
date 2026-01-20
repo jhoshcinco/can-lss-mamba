@@ -49,7 +49,10 @@ print("Loading data...")
 train_npz = np.load(os.path.join(DATA_DIR, "train_data.npz"))
 val_npz = np.load(os.path.join(DATA_DIR, "val_data.npz"))
 id_map = np.load(os.path.join(DATA_DIR, "id_map.npy"), allow_pickle=True).item()
-vocab_size = len(id_map) + 1
+
+# check if <UNK> exists in id map
+vocab_size = len(id_map)
+# preprocessing already includes <UNK>
 
 
 def get_loader(npz, shuffle=True):
@@ -77,11 +80,13 @@ num_attacks = np.sum(y_train_indices)
 # Weight = Number of Negatives / Number of Positives
 # If normal packets are 10x more common, attacks get 10x weight
 pos_weight_val = num_normal / (num_attacks + 1e-6) # +1e-6 avoids division by zero
+pos_weight_val = min(pos_weight_val, 10.0)
+print(f"Clipped Pos_Weight: {pos_weight_val:.2f}")
 print(f"Calculated Class Weight (Pos_Weight): {pos_weight_val:.2f}")
 
 # Convert to Tensor
 # Note: For CrossEntropyLoss with 2 classes, we usually use the 'weight' argument tensor([1.0, pos_weight])
-class_weights = torch.tensor([1.0, pos_weight_val], device=device)
+class_weights = torch.tensor([1.0, pos_weight_val], device=device, dtype=torch.float32)
 
 # 2. INIT MODEL
 model = LSS_CAN_Mamba(num_unique_ids=vocab_size).to(device)
