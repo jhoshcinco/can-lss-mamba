@@ -29,7 +29,7 @@ MODEL_NAME = os.environ.get("MODEL_NAME", "lss_can_mamba")
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 64))
 EPOCHS = int(os.environ.get("EPOCHS", 20))
 LR = float(os.environ.get("LR", 1e-4))
-ID_DROPOUT_PROB = float(os.environ.get("ID_DROPOUT_PROB", 0.10))  # 10% ID dropout (balanced)
+ID_DROPOUT_PROB = float(os.environ.get("ID_DROPOUT_PROB", 0.00))  # Disabled - baseline performs best
 
 os.makedirs(OUT_DIR, exist_ok=True)
 
