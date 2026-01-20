@@ -80,6 +80,24 @@ train_loader = get_loader(train_npz, shuffle=True)
 val_loader = get_loader(val_npz, shuffle=False)
 print(f"Data Loaded. Vocab Size: {vocab_size}")
 
+# === DIAGNOSTIC: Check class imbalance ===
+train_attack_rate = train_npz["labels"].mean()
+val_attack_rate = val_npz["labels"].mean()
+print(f"\n{'='*60}")
+print(f"DATASET STATISTICS:")
+print(f"{'='*60}")
+print(f"Training set:")
+print(f"  - Total windows: {len(train_npz['labels'])}")
+print(f"  - Attack windows: {train_npz['labels'].sum()}")
+print(f"  - Attack rate: {train_attack_rate:.4f} ({train_attack_rate*100:.2f}%)")
+print(f"  - Imbalance ratio: 1:{1/train_attack_rate:.1f} (attack:normal)")
+print(f"\nValidation set:")
+print(f"  - Total windows: {len(val_npz['labels'])}")
+print(f"  - Attack windows: {val_npz['labels'].sum()}")
+print(f"  - Attack rate: {val_attack_rate:.4f} ({val_attack_rate*100:.2f}%)")
+print(f"  - Imbalance ratio: 1:{1/val_attack_rate:.1f} (attack:normal)")
+print(f"{'='*60}\n")
+
 # 2. INIT MODEL (UNCHANGED)
 # 1. CALCULATE CLASS WEIGHTS
 # Count positives (Attacks) and negatives (Normal) in training labels
@@ -156,6 +174,11 @@ for epoch in range(start_epoch, EPOCHS):
     p_attack = np.array(all_preds)
     y_true = np.array(all_labels)
 
+    # === DIAGNOSTIC: Probability distribution analysis ===
+    # Check if model is learning to separate classes
+    p_normal = p_attack[y_true == 0]  # Probabilities for normal samples
+    p_attacks = p_attack[y_true == 1]  # Probabilities for attack samples
+
     # Find optimal threshold on validation set
     # Note: In three-bucket approach, this validation set is used for:
     # 1. Model selection (best epoch)
@@ -164,6 +187,21 @@ for epoch in range(start_epoch, EPOCHS):
     best_t, val_f1 = best_f1_threshold(y_true, p_attack)
     val_acc = accuracy_score(y_true, (p_attack >= best_t).astype(int))
 
+    # Additional diagnostics every 5 epochs or when saving best model
+    show_detailed_stats = (epoch % 5 == 0) or (val_f1 > best_f1)
+
+    if show_detailed_stats:
+        print(f"\n--- Probability Distribution Analysis (Epoch {epoch + 1}) ---")
+        print(f"Normal samples (label=0, n={len(p_normal)}):")
+        print(f"  Mean prob: {p_normal.mean():.4f} | Std: {p_normal.std():.4f}")
+        print(f"  Min: {p_normal.min():.4f} | Max: {p_normal.max():.4f}")
+        print(f"Attack samples (label=1, n={len(p_attacks)}):")
+        print(f"  Mean prob: {p_attacks.mean():.4f} | Std: {p_attacks.std():.4f}")
+        print(f"  Min: {p_attacks.min():.4f} | Max: {p_attacks.max():.4f}")
+        print(f"Separation: {p_attacks.mean() - p_normal.mean():.4f} (higher is better)")
+        print(f"---")
+
+
     print(
         f"Epoch {epoch + 1} | "
         f"Loss: {train_loss / len(train_loader):.4f} | "
@@ -171,6 +209,20 @@ for epoch in range(start_epoch, EPOCHS):
         f"Thr: {best_t:.2f} | "
         f"Time: {time.time() - start:.1f}s"
     )
+
+    # === WARNING: Detect suspicious threshold behavior ===
+    if best_t < 0.05:
+        print(f"⚠️  WARNING: Threshold = {best_t:.4f} is extremely low!")
+        print(f"    This means the model classifies almost everything as attack.")
+        print(f"    Possible causes:")
+        print(f"    1. Severe class imbalance (attack rate: {val_attack_rate:.4f})")
+        print(f"    2. Poor probability calibration (check separation above)")
+        print(f"    3. Model not learning meaningful patterns")
+        print(f"    Consider: Fβ score (β=0.5), PR-AUC, or constrained threshold range")
+    elif best_t > 0.95:
+        print(f"⚠️  WARNING: Threshold = {best_t:.4f} is extremely high!")
+        print(f"    This means the model rarely predicts attacks.")
+        print(f"    The model may be biased toward the majority class.")
 
     # Save best
     if val_f1 > best_f1:
