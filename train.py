@@ -98,6 +98,15 @@ print(f"  - Attack rate: {val_attack_rate:.4f} ({val_attack_rate*100:.2f}%)")
 print(f"  - Imbalance ratio: 1:{1/val_attack_rate:.1f} (attack:normal)")
 print(f"{'='*60}\n")
 
+# === CRITICAL WARNING: Check train/val distribution mismatch ===
+imbalance_ratio = val_attack_rate / train_attack_rate
+if imbalance_ratio > 2.0 or imbalance_ratio < 0.5:
+    print(f"🔴 CRITICAL WARNING: Train/Val attack rate mismatch!")
+    print(f"   Train: {train_attack_rate*100:.2f}% | Val: {val_attack_rate*100:.2f}%")
+    print(f"   Ratio: {imbalance_ratio:.2f}x difference")
+    print(f"   This violates the IID assumption and may cause poor generalization.")
+    print(f"   Consider: Stratified split or check for temporal attack clustering.\n")
+
 # 2. INIT MODEL (UNCHANGED)
 # 1. CALCULATE CLASS WEIGHTS
 # Count positives (Attacks) and negatives (Normal) in training labels
@@ -118,11 +127,37 @@ class_weights = torch.tensor([1.0, pos_weight_val], device=device, dtype=torch.f
 
 # 2. INIT MODEL
 model = LSS_CAN_Mamba(num_unique_ids=vocab_size).to(device)
-optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=0.05) # Increased weight_decay for regularization
+optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=0.01)  # Reduced weight_decay (was causing collapse)
 
-# 3. UPDATE LOSS FUNCTION
-# We pass the calculated weights here
-criterion = nn.CrossEntropyLoss(weight=class_weights)
+# 3. FOCAL LOSS for severe imbalance
+class FocalLoss(nn.Module):
+    """
+    Focal Loss to focus learning on hard-to-classify examples.
+    Helps when model outputs near-zero probabilities for minority class.
+    """
+    def __init__(self, alpha=None, gamma=2.0):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha  # Class weights [normal_weight, attack_weight]
+        self.gamma = gamma  # Focusing parameter (higher = more focus on hard examples)
+
+    def forward(self, logits, targets):
+        ce_loss = nn.functional.cross_entropy(logits, targets, reduction='none', weight=self.alpha)
+        pt = torch.exp(-ce_loss)  # Probability of correct class
+        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+        return focal_loss.mean()
+
+criterion = FocalLoss(alpha=class_weights, gamma=2.0)
+
+# Learning rate scheduler with warmup
+from torch.optim.lr_scheduler import OneCycleLR
+scheduler = OneCycleLR(
+    optimizer,
+    max_lr=LR,
+    epochs=EPOCHS,
+    steps_per_epoch=len(train_loader),
+    pct_start=0.1,  # 10% warmup
+    anneal_strategy='cos'
+)
 
 # 2.5 RESUME (NEW)
 start_epoch = 0
@@ -156,7 +191,12 @@ for epoch in range(start_epoch, EPOCHS):
         logits = model(ids, feats)
         loss = criterion(logits, labels)
         loss.backward()
+
+        # Gradient clipping to prevent instability
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
         optimizer.step()
+        scheduler.step()  # Step learning rate scheduler
         train_loss += loss.item()
 
     # Validation

@@ -23,7 +23,7 @@ DATASET_ROOT = r"/workspace/data/can-train-and-test-v1.5/set_01"
 MODEL_PATH = "/workspace/checkpoints/set_01/lss_can_mamba_best.pth"
 CHECKPOINT_PATH = "/workspace/checkpoints/set_01/lss_can_mamba_last.pth"  # For threshold
 ID_MAP_PATH = "/workspace/data/processed_data/set_01/id_map.npy"
-OUTPUT_CSV = "/workspace/final_thesis_results.csv"
+OUTPUT_CSV = "/workspace/final_thesis_results_02.csv"
 
 BATCH_SIZE = 128
 WINDOW_SIZE = 64
