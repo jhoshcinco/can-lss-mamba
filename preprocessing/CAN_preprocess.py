@@ -9,7 +9,7 @@ from concurrent.futures import ProcessPoolExecutor
 # OUTPUT_DIR = "processed_data/set_01"
 
 DATASET_ROOT = "/workspace/data/can-train-and-test-v1.5/set_01"
-OUTPUT_DIR = "/workspace/data/processed_data/set_01"
+OUTPUT_DIR = "/workspace/data/processed_data/set_01_run_02"
 
 WINDOW_SIZE = 64
 STRIDE = 64
@@ -156,6 +156,9 @@ def run_pipeline():
 
     # Save ID Map
     np.save(os.path.join(OUTPUT_DIR, "id_map.npy"), id_map)
+    # to check if UNK is in the preprocessed file
+    assert "<UNK>" in id_map, "ERROR: <UNK> not found in id_map"
+    print("UNK index:", id_map["<UNK>"])
 
     # 3. PROCESS TRAIN DATA
     print("Processing Training Data...")
