@@ -29,6 +29,7 @@ MODEL_NAME = os.environ.get("MODEL_NAME", "lss_can_mamba")
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 64))
 EPOCHS = int(os.environ.get("EPOCHS", 20))
 LR = float(os.environ.get("LR", 1e-4))
+ID_DROPOUT_PROB = float(os.environ.get("ID_DROPOUT_PROB", 0.15))  # 15% ID dropout for generalization
 
 os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -65,20 +66,30 @@ def best_f1_threshold(y_true, p_attack):
     return best_t, best_f1
 
 
-def get_loader(npz, shuffle=True):
+def get_loader(npz, shuffle=True, id_dropout_prob=0.0):
     # Combine Payload (8) and Delta (1) -> 9 Features
     feats = np.concatenate([npz["payloads"], npz["deltas"]], axis=-1)
+
+    # ID Dropout Augmentation: Replace random IDs with <UNK> during training
+    # Forces model to learn from payload/timing instead of just memorizing IDs
+    ids = npz["ids"].copy()
+    if id_dropout_prob > 0 and shuffle:  # Only apply during training
+        unk_token = id_map.get("<UNK>", vocab_size - 1)
+        dropout_mask = np.random.rand(len(ids)) < id_dropout_prob
+        ids[dropout_mask] = unk_token
+
     dataset = TensorDataset(
-        torch.LongTensor(npz["ids"]),
+        torch.LongTensor(ids),
         torch.FloatTensor(feats),
         torch.LongTensor(npz["labels"]),
     )
     return DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=shuffle)
 
 
-train_loader = get_loader(train_npz, shuffle=True)
-val_loader = get_loader(val_npz, shuffle=False)
+train_loader = get_loader(train_npz, shuffle=True, id_dropout_prob=ID_DROPOUT_PROB)
+val_loader = get_loader(val_npz, shuffle=False, id_dropout_prob=0.0)  # No dropout for validation
 print(f"Data Loaded. Vocab Size: {vocab_size}")
+print(f"ID Dropout: {ID_DROPOUT_PROB*100:.1f}% (training only)")
 
 # === DIAGNOSTIC: Check class imbalance ===
 train_attack_rate = train_npz["labels"].mean()
