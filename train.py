@@ -340,10 +340,12 @@ for epoch in range(start_epoch, EPOCHS):
         torch.save(model.state_dict(), MODEL_PATH)
         print(f">>> Best model saved! (F1={best_f1:.4f}, Threshold={best_threshold:.4f})")
         
-        # Save best model to WandB
+        # Save best model to WandB with proper base_path
         if wandb_logger:
             try:
-                wandb_logger.save(MODEL_PATH)
+                # Extract base directory to preserve directory structure
+                checkpoint_base = os.path.dirname(MODEL_PATH)
+                wandb_logger.save(MODEL_PATH, base_path=checkpoint_base)
             except Exception:
                 pass  # Silently fail WandB save
     else:
@@ -366,5 +368,13 @@ for epoch in range(start_epoch, EPOCHS):
         LAST_PATH,
     )
     print(">>> Last checkpoint saved.")
+    
+    # Save last checkpoint to WandB with proper base_path
+    if wandb_logger:
+        try:
+            checkpoint_base = os.path.dirname(LAST_PATH)
+            wandb_logger.save(LAST_PATH, base_path=checkpoint_base)
+        except Exception:
+            pass  # Silently fail WandB save
 
 print(f"Done. Best F1: {best_f1:.4f} | Best Threshold: {best_threshold:.4f}")
