@@ -35,8 +35,17 @@ def load_config(config_path: Optional[str] = None) -> DictConfig:
     
     # Check if config file exists
     if not config_file.exists():
-        # Try relative to project root
+        # Try relative to project root - look for marker files
         project_root = Path(__file__).parent.parent.parent
+        
+        # Try to find project root by looking for marker files
+        current = Path(__file__).parent
+        for _ in range(5):  # Search up to 5 levels
+            if (current / "setup.sh").exists() or (current / "requirements.txt").exists():
+                project_root = current
+                break
+            current = current.parent
+        
         config_file = project_root / config_path
         
         if not config_file.exists():

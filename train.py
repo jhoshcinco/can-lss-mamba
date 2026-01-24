@@ -298,10 +298,11 @@ for epoch in range(start_epoch, EPOCHS):
                 "val/threshold": best_t,
                 "val/separation": p_attacks.mean() - p_normal.mean(),
             }
+            # Try with step parameter first, fall back to without if needed
             if hasattr(wandb_logger, 'log'):
-                wandb_logger.log(log_dict)
-            else:
                 wandb_logger.log(log_dict, step=epoch + 1)
+            else:
+                wandb_logger.log(log_dict)
         except Exception as e:
             pass  # Silently fail WandB logging
 
@@ -342,10 +343,7 @@ for epoch in range(start_epoch, EPOCHS):
         # Save best model to WandB
         if wandb_logger:
             try:
-                if hasattr(wandb_logger, 'save'):
-                    wandb_logger.save(MODEL_PATH)
-                else:
-                    wandb_logger.save(MODEL_PATH)
+                wandb_logger.save(MODEL_PATH)
             except Exception:
                 pass  # Silently fail WandB save
     else:
