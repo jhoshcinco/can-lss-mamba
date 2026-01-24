@@ -5,14 +5,37 @@ import glob
 from concurrent.futures import ProcessPoolExecutor
 
 # --- CONFIGURATION ---
-# DATASET_ROOT = r"C:\Users\Jhosh\Desktop\CAN-LSS-Mamba\dataset\can-train-and-test-v1.5\set_01"
-# OUTPUT_DIR = "processed_data/set_01"
+# Supports both hardcoded paths (backwards compatible) and environment variable override
 
-DATASET_ROOT = "/workspace/data/can-train-and-test-v1.5/set_01"
-OUTPUT_DIR = "/workspace/data/processed_data/set_01_run_02"
+# Get dataset name from environment variable (e.g., set_01, set_02, etc.)
+DATASET = os.environ.get("DATASET", "set_01")
 
-WINDOW_SIZE = 64
-STRIDE = 64
+# DATASET_ROOT: Path to raw dataset
+# Can be overridden with DATASET_ROOT environment variable
+DATASET_ROOT = os.environ.get(
+    "DATASET_ROOT",
+    f"/workspace/data/can-train-and-test-v1.5/{DATASET}"
+)
+
+# OUTPUT_DIR: Path to save processed data
+# Can be overridden with OUTPUT_DIR environment variable
+OUTPUT_DIR = os.environ.get(
+    "OUTPUT_DIR",
+    f"/workspace/data/processed_data/{DATASET}_run_02"
+)
+
+WINDOW_SIZE = int(os.environ.get("WINDOW_SIZE", 64))
+STRIDE = int(os.environ.get("STRIDE", 64))
+
+print(f"\n{'='*60}")
+print(f"CAN Preprocessing Configuration")
+print(f"{'='*60}")
+print(f"Dataset: {DATASET}")
+print(f"Dataset Root: {DATASET_ROOT}")
+print(f"Output Dir: {OUTPUT_DIR}")
+print(f"Window Size: {WINDOW_SIZE}")
+print(f"Stride: {STRIDE}")
+print(f"{'='*60}\n")
 
 
 # --- HELPER FUNCTIONS ---
