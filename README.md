@@ -15,6 +15,11 @@ A deep learning model for Controller Area Network (CAN) bus intrusion detection 
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
+- [Advanced Features](#-advanced-features)
+  - [Cross-Dataset Evaluation](#cross-dataset-evaluation)
+  - [Hyperparameter Tuning](#hyperparameter-tuning)
+  - [Combined Training](#combined-training)
+- [Complete Research Workflow](#-complete-research-workflow)
 - [Project Structure](#project-structure)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
@@ -30,12 +35,21 @@ CAN-LSS-Mamba is a state-of-the-art intrusion detection system for automotive CA
 
 ## ✨ Features
 
+### Core Features
 - 🔧 **Configuration Management** - YAML-based configs for different environments
 - 📊 **Experiment Tracking** - Integrated Weights & Biases (WandB) support
 - 🐳 **Docker Support** - Containerized environment for reproducibility
 - 📓 **Jupyter Workflow** - Interactive notebook for vast.ai
 - 🔄 **Backwards Compatible** - Works with existing scripts and workflows
-- ⚙️ **Easy Setup** - One-command setup script for immediate use
+- ⚙️ **Easy Setup** - One-command setup script with smart dependency checking
+
+### Advanced Features (New!)
+- 🔬 **Cross-Dataset Evaluation** - Test generalization across vehicle datasets
+- 🎯 **Hyperparameter Tuning** - Grid search and Bayesian optimization
+- 📈 **Experiment Comparison** - Compare runs with validation metrics
+- 🔗 **Combined Training** - Train on multiple datasets simultaneously
+- 🚫 **Data Leakage Prevention** - Three-bucket strategy for ML research
+- 📊 **Multi-Dataset Support** - Easy switching between datasets
 
 ## 🚀 Workflow: GitHub Codespaces → vast.ai
 
@@ -235,6 +249,127 @@ jupyter lab
 # Open notebooks/vastai_workflow.ipynb
 ```
 
+## 🎓 Advanced Features
+
+### Cross-Dataset Evaluation
+
+Test model generalization across different vehicle datasets:
+
+```bash
+# Train on one dataset, test on all others
+python scripts/cross_dataset_eval.py --train-dataset set_01
+
+# Full cross-dataset evaluation matrix
+python scripts/cross_dataset_eval.py --all \
+  --batch-size 64 --lr 0.0005 --epochs 30
+
+# View results
+cat /workspace/results/cross_dataset_matrix_*.csv
+```
+
+**Why this matters**: Tests whether your model truly generalizes or just memorizes specific dataset characteristics. Critical for ML research validity.
+
+📖 [Read the full guide](docs/cross_dataset_evaluation.md)
+
+### Hyperparameter Tuning
+
+Systematically find the best hyperparameters using validation metrics only (no data leakage):
+
+```bash
+# Quick test (3 experiments, ~1 hour)
+bash scripts/quick_test.sh
+
+# Grid search (full exploration)
+python scripts/grid_search.py --dataset set_01 \
+  --batch-sizes 32,64,128 \
+  --learning-rates 0.0001,0.0005,0.001 \
+  --epochs 20,30,50
+
+# Compare results
+python scripts/compare_runs.py --tag hyperparameter_search
+
+# WandB Bayesian optimization
+wandb sweep configs/sweep.yaml
+wandb agent <sweep-id>
+```
+
+📖 [Read the full guide](docs/hyperparameter_tuning.md)
+
+### Combined Training
+
+Train on multiple datasets simultaneously for maximum performance:
+
+```bash
+python scripts/train_combined.py \
+  --datasets set_01,set_02,set_03,set_04 \
+  --batch-size 64 --lr 0.0005 --epochs 30
+```
+
+### Multi-Dataset Preprocessing
+
+Preprocess all datasets at once:
+
+```bash
+# Preprocess all configured datasets
+bash scripts/preprocess_all.sh
+
+# Individual dataset
+DATASET=set_02 python preprocessing/CAN_preprocess.py
+```
+
+## 📚 Complete Research Workflow
+
+Here's a complete workflow from hyperparameter tuning to final evaluation:
+
+```bash
+# ============================================================================
+# COMPLETE RESEARCH WORKFLOW
+# ============================================================================
+
+# Step 1: Setup environment
+bash setup.sh
+
+# Step 2: Preprocess all datasets
+bash scripts/preprocess_all.sh
+
+# Step 3: Hyperparameter tuning (uses validation metrics - Bucket 2)
+python scripts/grid_search.py --dataset set_01
+# → Finds best config: batch=64, lr=0.0005, epochs=30
+
+# Step 4: Compare hyperparameter results
+python scripts/compare_runs.py --tag hyperparameter_search
+# → Shows validation F1 for all configs
+
+# Step 5: Cross-dataset evaluation with best config (uses test metrics - Bucket 3)
+python scripts/cross_dataset_eval.py --all \
+  --batch-size 64 --lr 0.0005 --epochs 30
+# → Trains on each dataset, tests on all others
+# → Generates cross-dataset performance matrix
+
+# Step 6: Train combined model (bonus)
+python scripts/train_combined.py \
+  --datasets set_01,set_02,set_03,set_04 \
+  --batch-size 64 --lr 0.0005 --epochs 30
+
+# Step 7: Export all results for thesis/paper
+python scripts/compare_runs.py --tag cross_dataset_eval --output thesis_results.csv
+```
+
+### Three-Bucket Strategy (Avoiding Data Leakage)
+
+Our implementation follows ML best practices:
+
+- **Bucket 1 (Training)**: 80% of `train_02_with_attacks/` - Learn model parameters
+- **Bucket 2 (Validation)**: 20% of `train_02_with_attacks/` - Tune hyperparameters
+- **Bucket 3 (Test)**: `test_*/` folders - Final evaluation ONLY
+
+⚠️ **Critical Rules**:
+- ✅ Tune hyperparameters using **validation** metrics (Bucket 2)
+- ❌ **NEVER** tune using test metrics (Bucket 3) - that's data leakage!
+- ✅ Report test metrics in your thesis/paper
+
+📖 [Read the detailed explanation](docs/three_bucket_strategy.md)
+
 ## 📁 Project Structure
 
 ```
@@ -242,7 +377,14 @@ can-lss-mamba/
 ├── configs/                    # Configuration files
 │   ├── default.yaml           # Base config
 │   ├── vastai.yaml            # vast.ai config
-│   └── codespaces.yaml        # Codespaces config
+│   ├── codespaces.yaml        # Codespaces config
+│   ├── datasets.yaml          # Multi-dataset configurations
+│   └── sweep.yaml             # WandB sweep config (Bayesian optimization)
+│
+├── docs/                      # Documentation
+│   ├── three_bucket_strategy.md       # Avoiding data leakage
+│   ├── hyperparameter_tuning.md       # Tuning guide
+│   └── cross_dataset_evaluation.md    # Cross-dataset guide
 │
 ├── src/                       # Source code (modular)
 │   ├── data/                  # Data processing
@@ -253,10 +395,16 @@ can-lss-mamba/
 │   │   └── wandb_logger.py
 │   └── config.py              # Config loader
 │
-├── scripts/                   # Wrapper scripts (use configs)
-│   ├── preprocess.py
-│   ├── train.py
-│   └── evaluate.py
+├── scripts/                   # Advanced workflow scripts
+│   ├── preprocess.py          # Config-based preprocessing
+│   ├── train.py               # Config-based training
+│   ├── evaluate.py            # Config-based evaluation
+│   ├── cross_dataset_eval.py  # Cross-dataset evaluation
+│   ├── train_combined.py      # Combined dataset training
+│   ├── grid_search.py         # Hyperparameter grid search
+│   ├── compare_runs.py        # WandB experiment comparison
+│   ├── quick_test.sh          # Quick hyperparameter test
+│   └── preprocess_all.sh      # Batch preprocessing
 │
 ├── notebooks/                 # Jupyter notebooks
 │   └── vastai_workflow.ipynb
@@ -271,7 +419,7 @@ can-lss-mamba/
 ├── evaluate.py                # Evaluation script (original)
 ├── model.py                   # Model definition (original)
 ├── requirements.txt           # Python dependencies
-├── setup.sh                   # Auto-setup script
+├── setup.sh                   # Auto-setup script (smart dependency checking)
 ├── Dockerfile                 # Docker image definition
 ├── docker-compose.yml         # Docker services
 ├── .env.example              # Environment variables template

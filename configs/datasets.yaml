@@ -1,0 +1,90 @@
+# Dataset configurations for easy switching
+# Used by cross-dataset evaluation and multi-dataset training scripts
+
+datasets:
+  set_01:
+    raw: /workspace/data/can-train-and-test-v1.5/set_01
+    train_folder: train_02_with_attacks
+    processed: /workspace/data/processed_data/set_01_run_02
+    test_folders:
+      - test_01_known_vehicle_known_attack
+      - test_02_unknown_vehicle_known_attack
+      - test_03_known_vehicle_unknown_attack
+      - test_04_unknown_vehicle_unknown_attack
+      - test_05_suppress
+      - test_06_masquerade
+    description: "Vehicles 1-2 train, 3-4 test"
+    
+  set_02:
+    raw: /workspace/data/can-train-and-test-v1.5/set_02
+    train_folder: train_02_with_attacks
+    processed: /workspace/data/processed_data/set_02_run_01
+    test_folders:
+      - test_01_known_vehicle_known_attack
+      - test_02_unknown_vehicle_known_attack
+      - test_03_known_vehicle_unknown_attack
+      - test_04_unknown_vehicle_unknown_attack
+      - test_05_suppress
+      - test_06_masquerade
+    description: "Vehicles 1-2 train (different attacks), 3-4 test"
+    
+  set_03:
+    raw: /workspace/data/can-train-and-test-v1.5/set_03
+    train_folder: train_02_with_attacks
+    processed: /workspace/data/processed_data/set_03_run_01
+    test_folders:
+      - test_01_known_vehicle_known_attack
+      - test_02_unknown_vehicle_known_attack
+      - test_03_known_vehicle_unknown_attack
+      - test_04_unknown_vehicle_unknown_attack
+      - test_05_suppress
+      - test_06_masquerade
+    description: "Vehicles 3-4 train, 1-2 test (reversed)"
+    
+  set_04:
+    raw: /workspace/data/can-train-and-test-v1.5/set_04
+    train_folder: train_02_with_attacks
+    processed: /workspace/data/processed_data/set_04_run_01
+    test_folders:
+      - test_01_known_vehicle_known_attack
+      - test_02_unknown_vehicle_known_attack
+      - test_03_known_vehicle_unknown_attack
+      - test_04_unknown_vehicle_unknown_attack
+      - test_05_suppress
+      - test_06_masquerade
+    description: "Vehicles 3-4 train, 1-2 test (reversed)"
+    
+  hcrl_ch:
+    raw: /workspace/data/can-train-and-test-v1.5/hcrl-ch
+    train_folder: train_02_with_attacks
+    processed: /workspace/data/processed_data/hcrl_ch_run_01
+    test_folders: []
+    description: "HCRL Challenge dataset"
+    
+  hcrl_sa:
+    raw: /workspace/data/can-train-and-test-v1.5/hcrl-sa
+    train_folder: train_02_with_attacks
+    processed: /workspace/data/processed_data/hcrl_sa_run_01
+    test_folders: []
+    description: "HCRL Survival Analysis (Kia, Sonata, Spark)"
+
+# Default dataset for single-dataset experiments
+default_dataset: set_01
+
+# Datasets for cross-dataset evaluation (only datasets with test folders)
+cross_eval_datasets:
+  - set_01
+  - set_02
+  - set_03
+  - set_04
+
+# Common preprocessing parameters
+preprocessing:
+  window_size: 64
+  stride: 64
+  train_split: 0.8
+
+# WandB configuration for cross-dataset experiments
+wandb:
+  entity: jhoshcinco-ca-western-university
+  project: can-lss-mamba
