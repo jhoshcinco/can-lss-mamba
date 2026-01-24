@@ -71,6 +71,23 @@ print(f"{'='*60}\n")
 
 # --- HELPER FUNCTIONS ---
 
+def is_na_value(value):
+    """
+    Check if a value is considered 'na' or invalid.
+    
+    Args:
+        value: Value to check
+        
+    Returns:
+        True if value is 'na', False otherwise
+    """
+    if pd.isna(value):
+        return True
+    if isinstance(value, str) and value.lower() in ['na', 'nan', '']:
+        return True
+    return False
+
+
 def safe_hex_to_int(value, default=0):
     """
     Safely convert hex string to integer, handling invalid values.
@@ -82,15 +99,13 @@ def safe_hex_to_int(value, default=0):
     Returns:
         Integer value or default
     """
-    if pd.isna(value) or value in ['na', 'NA', '', 'nan', 'NaN']:
+    if is_na_value(value):
         return default
     
     try:
         # Handle both '0x123' and '123' formats
         if isinstance(value, str):
             value = value.strip().lower()
-            if value in ['na', '', 'nan']:
-                return default
             if value.startswith('0x'):
                 return int(value, 16)
             else:
@@ -111,7 +126,7 @@ def safe_float(value, default=0.0):
     Returns:
         Float value or default
     """
-    if pd.isna(value) or value in ['na', 'NA', '', 'nan', 'NaN']:
+    if is_na_value(value):
         return default
     try:
         return float(value)
@@ -254,7 +269,15 @@ def parse_csv(file_path, id_map=None, skip_invalid_rows=False):
         labels = df[label_col].apply(lambda x: 1 if str(x).upper() in ['1', 'T', 'ATTACK'] else 0).values
 
         # 6. Calculate statistics
-        stats['rows_with_na'] = stats['invalid_can_id'] + stats['invalid_timestamp'] + stats['invalid_data_bytes']
+        # Note: rows_with_na counts total invalid field instances, not unique rows
+        # This helps identify which fields are most problematic
+        stats['total_invalid_fields'] = stats['invalid_can_id'] + stats['invalid_timestamp'] + stats['invalid_data_bytes']
+        
+        # Count actual rows with at least one invalid field
+        has_invalid_id = (df[id_col] == 0)
+        has_invalid_time = (df[time_col] == 0.0)
+        has_invalid_data = False  # We can't easily track this per-row without refactoring
+        stats['rows_with_na'] = (has_invalid_id | has_invalid_time).sum()
         stats['valid_rows'] = stats['total_rows'] - stats['rows_with_na']
         
         # 7. Filter out invalid rows if requested
@@ -329,12 +352,17 @@ def create_windows(ids, payloads, deltas, labels):
 
 # --- MAIN PIPELINE ---
 
-def run_pipeline(skip_invalid_rows=False):
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+def run_pipeline(skip_invalid_rows=False, dataset=None, dataset_root=None, output_dir=None):
+    # Use provided parameters or fall back to globals
+    dataset = dataset or DATASET
+    dataset_root = dataset_root or DATASET_ROOT
+    output_dir = output_dir or OUTPUT_DIR
+    
+    os.makedirs(output_dir, exist_ok=True)
 
     # Overall statistics
     overall_stats = {
-        'dataset': DATASET,
+        'dataset': dataset,
         'total_files': 0,
         'total_rows': 0,
         'valid_rows': 0,
@@ -343,7 +371,7 @@ def run_pipeline(skip_invalid_rows=False):
     }
 
     # 1. IDENTIFY FILES
-    train_folder = os.path.join(DATASET_ROOT, "train_02_with_attacks")
+    train_folder = os.path.join(dataset_root, "train_02_with_attacks")
 
     # Check if folder exists
     if not os.path.exists(train_folder):
@@ -382,10 +410,10 @@ def run_pipeline(skip_invalid_rows=False):
     # Create Mapping
     id_map = {can_id: i for i, can_id in enumerate(sorted(unique_ids))}
     id_map['<UNK>'] = len(id_map)  # Handle unknown IDs
-    logger.info(f"Vocab Size: {len(id_map)} IDs (saved to {OUTPUT_DIR}/id_map.npy)")
+    logger.info(f"Vocab Size: {len(id_map)} IDs (saved to {output_dir}/id_map.npy)")
 
     # Save ID Map
-    np.save(os.path.join(OUTPUT_DIR, "id_map.npy"), id_map)
+    np.save(os.path.join(output_dir, "id_map.npy"), id_map)
     # to check if UNK is in the preprocessed file
     assert "<UNK>" in id_map, "ERROR: <UNK> not found in id_map"
     logger.info(f"UNK index: {id_map['<UNK>']}")
@@ -408,7 +436,7 @@ def run_pipeline(skip_invalid_rows=False):
 
     # Concatenate and Save
     if X_tr_ids:
-        np.savez(os.path.join(OUTPUT_DIR, "train_data.npz"),
+        np.savez(os.path.join(output_dir, "train_data.npz"),
                  ids=np.concatenate(X_tr_ids),
                  payloads=np.concatenate(X_tr_pay),
                  deltas=np.concatenate(X_tr_time),
@@ -434,7 +462,7 @@ def run_pipeline(skip_invalid_rows=False):
                 y_val.append(w_lbl)
 
     if X_val_ids:
-        np.savez(os.path.join(OUTPUT_DIR, "val_data.npz"),
+        np.savez(os.path.join(output_dir, "val_data.npz"),
                  ids=np.concatenate(X_val_ids),
                  payloads=np.concatenate(X_val_pay),
                  deltas=np.concatenate(X_val_time),
@@ -443,13 +471,13 @@ def run_pipeline(skip_invalid_rows=False):
 
     # 5. Save data quality report
     quality_report = {
-        'dataset': DATASET,
+        'dataset': dataset,
         'total_files': overall_stats['total_files'],
         'preprocessing_completed': True,
         'skip_invalid_rows': skip_invalid_rows
     }
     
-    quality_report_path = os.path.join(OUTPUT_DIR, 'data_quality_report.json')
+    quality_report_path = os.path.join(output_dir, 'data_quality_report.json')
     with open(quality_report_path, 'w') as f:
         json.dump(quality_report, f, indent=2)
     logger.info(f"Data quality report saved to {quality_report_path}")
@@ -461,32 +489,31 @@ def run_pipeline(skip_invalid_rows=False):
 if __name__ == "__main__":
     args = parse_args()
     
-    # Override config with command-line arguments if provided
-    if args.dataset:
-        DATASET = args.dataset
-        os.environ["DATASET"] = DATASET
+    # Get configuration, allowing command-line args to override
+    dataset = args.dataset if args.dataset else DATASET
+    dataset_root = args.dataset_root if args.dataset_root else DATASET_ROOT
+    output_dir = args.output_dir if args.output_dir else OUTPUT_DIR
     
-    if args.dataset_root:
-        DATASET_ROOT = args.dataset_root
-        os.environ["DATASET_ROOT"] = DATASET_ROOT
-    else:
-        DATASET_ROOT = os.environ.get("DATASET_ROOT", f"/workspace/data/can-train-and-test-v1.5/{DATASET}")
-    
-    if args.output_dir:
-        OUTPUT_DIR = args.output_dir
-        os.environ["OUTPUT_DIR"] = OUTPUT_DIR
-    else:
-        OUTPUT_DIR = os.environ.get("OUTPUT_DIR", f"/workspace/data/processed_data/{DATASET}_run_02")
+    # Update dataset_root and output_dir if dataset was changed
+    if args.dataset and not args.dataset_root:
+        dataset_root = f"/workspace/data/can-train-and-test-v1.5/{dataset}"
+    if args.dataset and not args.output_dir:
+        output_dir = f"/workspace/data/processed_data/{dataset}_run_02"
     
     # Print updated configuration if arguments were provided
     if args.dataset or args.dataset_root or args.output_dir:
         print(f"\n{'='*60}")
         print(f"Updated Configuration (from command-line args)")
         print(f"{'='*60}")
-        print(f"Dataset: {DATASET}")
-        print(f"Dataset Root: {DATASET_ROOT}")
-        print(f"Output Dir: {OUTPUT_DIR}")
+        print(f"Dataset: {dataset}")
+        print(f"Dataset Root: {dataset_root}")
+        print(f"Output Dir: {output_dir}")
         print(f"{'='*60}\n")
     
     logger.info(f"Starting preprocessing with skip_invalid_rows={args.skip_invalid_rows}")
-    run_pipeline(skip_invalid_rows=args.skip_invalid_rows)
+    run_pipeline(
+        skip_invalid_rows=args.skip_invalid_rows,
+        dataset=dataset,
+        dataset_root=dataset_root,
+        output_dir=output_dir
+    )

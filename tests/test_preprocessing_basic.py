@@ -57,17 +57,24 @@ def test_safe_conversion_logic():
     """Test safe conversion logic without importing dependencies."""
     # Test that the logic handles 'na' values correctly
     
+    def is_na_value_test(value):
+        """Test implementation of is_na_value."""
+        # Using a simplified check that doesn't require pandas
+        if value is None:
+            return True
+        if isinstance(value, str) and value.lower() in ['na', 'nan', '']:
+            return True
+        # Note: Can't test pd.isna() without pandas import
+        return False
+    
     def safe_hex_to_int_test(value, default=0):
         """Test implementation of safe_hex_to_int."""
-        # Check for 'na' values
-        if value in ['na', 'NA', '', 'nan', 'NaN', None]:
+        if is_na_value_test(value):
             return default
         
         try:
             if isinstance(value, str):
                 value = value.strip().lower()
-                if value in ['na', '', 'nan']:
-                    return default
                 if value.startswith('0x'):
                     return int(value, 16)
                 else:
@@ -85,6 +92,7 @@ def test_safe_conversion_logic():
         ('', 0, 0),
         ('na', 999, 999),
         ('199', 0, 409),
+        (None, 0, 0),
     ]
     
     all_passed = True
