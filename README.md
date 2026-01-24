@@ -207,7 +207,29 @@ CONFIG_PATH=configs/vastai.yaml python scripts/preprocess.py
 
 # With environment overrides
 WINDOW_SIZE=128 STRIDE=64 python scripts/preprocess.py
+
+# Handle datasets with 'na' values (e.g., set_02)
+DATASET=set_02 python preprocessing/CAN_preprocess.py
+
+# Skip invalid rows instead of replacing with defaults
+python preprocessing/CAN_preprocess.py --skip-invalid-rows
+
+# Preprocess specific dataset
+python preprocessing/CAN_preprocess.py --dataset set_02 --dataset-root /path/to/data
+
+# Check data quality report after preprocessing
+cat /workspace/data/processed_data/set_02_run_02/data_quality_report.json
 ```
+
+**Data Quality Handling:**
+
+The preprocessing script now handles invalid data (e.g., 'na' values) that may appear in some datasets:
+- Invalid hex values (CAN ID, data bytes) are replaced with default value 0
+- Invalid timestamps are replaced with 0.0
+- Data quality statistics are logged for each file
+- A JSON report is saved with preprocessing results
+- Use `--skip-invalid-rows` flag to skip rows with invalid data instead of replacing with defaults
+
 
 ### Training
 ```bash
@@ -481,6 +503,29 @@ bash setup.sh
 # Manually create directories
 mkdir -p data checkpoints results
 ```
+
+### Preprocessing Errors with 'na' Values
+
+If you encounter errors like `invalid literal for int() with base 16: 'na'`:
+
+```bash
+# This is now automatically handled in the updated preprocessing script
+DATASET=set_02 python preprocessing/CAN_preprocess.py
+
+# The script will:
+# - Replace 'na' values with defaults (CAN ID=0, data bytes=0)
+# - Log data quality warnings
+# - Generate a data quality report
+
+# To skip invalid rows entirely:
+python preprocessing/CAN_preprocess.py --skip-invalid-rows
+
+# Check the data quality report:
+cat /workspace/data/processed_data/set_02_run_02/data_quality_report.json
+```
+
+**Note:** Some datasets (e.g., set_02) contain 'na' values in CAN ID and data fields. The preprocessing script now handles these gracefully by replacing them with default values or skipping the rows entirely.
+
 
 ## 🧪 Testing
 
