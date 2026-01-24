@@ -2,30 +2,62 @@ import pandas as pd
 import numpy as np
 import os
 import glob
+import logging
+import argparse
+import json
 from concurrent.futures import ProcessPoolExecutor
+
+# --- LOGGING SETUP ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
 # Supports both hardcoded paths (backwards compatible) and environment variable override
 
-# Get dataset name from environment variable (e.g., set_01, set_02, etc.)
-DATASET = os.environ.get("DATASET", "set_01")
+# Parse command-line arguments
+def parse_args():
+    parser = argparse.ArgumentParser(description='CAN Data Preprocessing with NA value handling')
+    parser.add_argument('--skip-invalid-rows', action='store_true',
+                        help='Skip rows with invalid data instead of replacing with defaults')
+    parser.add_argument('--dataset', type=str, default=None,
+                        help='Dataset name (e.g., set_01, set_02)')
+    parser.add_argument('--dataset-root', type=str, default=None,
+                        help='Path to raw dataset directory')
+    parser.add_argument('--output-dir', type=str, default=None,
+                        help='Path to save processed data')
+    return parser.parse_args()
 
-# DATASET_ROOT: Path to raw dataset
-# Can be overridden with DATASET_ROOT environment variable
-DATASET_ROOT = os.environ.get(
-    "DATASET_ROOT",
-    f"/workspace/data/can-train-and-test-v1.5/{DATASET}"
-)
 
-# OUTPUT_DIR: Path to save processed data
-# Can be overridden with OUTPUT_DIR environment variable
-OUTPUT_DIR = os.environ.get(
-    "OUTPUT_DIR",
-    f"/workspace/data/processed_data/{DATASET}_run_02"
-)
+def get_config():
+    """Get configuration from environment variables and command-line args."""
+    # Get dataset name from environment variable (e.g., set_01, set_02, etc.)
+    dataset = os.environ.get("DATASET", "set_01")
+    
+    # DATASET_ROOT: Path to raw dataset
+    # Can be overridden with DATASET_ROOT environment variable
+    dataset_root = os.environ.get(
+        "DATASET_ROOT",
+        f"/workspace/data/can-train-and-test-v1.5/{dataset}"
+    )
+    
+    # OUTPUT_DIR: Path to save processed data
+    # Can be overridden with OUTPUT_DIR environment variable
+    output_dir = os.environ.get(
+        "OUTPUT_DIR",
+        f"/workspace/data/processed_data/{dataset}_run_02"
+    )
+    
+    window_size = int(os.environ.get("WINDOW_SIZE", 64))
+    stride = int(os.environ.get("STRIDE", 64))
+    
+    return dataset, dataset_root, output_dir, window_size, stride
 
-WINDOW_SIZE = int(os.environ.get("WINDOW_SIZE", 64))
-STRIDE = int(os.environ.get("STRIDE", 64))
+
+# Initialize with default config (can be overridden in main)
+DATASET, DATASET_ROOT, OUTPUT_DIR, WINDOW_SIZE, STRIDE = get_config()
 
 print(f"\n{'='*60}")
 print(f"CAN Preprocessing Configuration")
@@ -37,20 +69,108 @@ print(f"Window Size: {WINDOW_SIZE}")
 print(f"Stride: {STRIDE}")
 print(f"{'='*60}\n")
 
-
 # --- HELPER FUNCTIONS ---
 
-def parse_csv(file_path, id_map=None):
+def safe_hex_to_int(value, default=0):
+    """
+    Safely convert hex string to integer, handling invalid values.
+    
+    Args:
+        value: String value to convert (e.g., '0x123', '123', 'na')
+        default: Default value if conversion fails
+        
+    Returns:
+        Integer value or default
+    """
+    if pd.isna(value) or value in ['na', 'NA', '', 'nan', 'NaN']:
+        return default
+    
+    try:
+        # Handle both '0x123' and '123' formats
+        if isinstance(value, str):
+            value = value.strip().lower()
+            if value in ['na', '', 'nan']:
+                return default
+            if value.startswith('0x'):
+                return int(value, 16)
+            else:
+                return int(value, 16)
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_float(value, default=0.0):
+    """
+    Safely convert to float, handling invalid values.
+    
+    Args:
+        value: Value to convert
+        default: Default value if conversion fails
+        
+    Returns:
+        Float value or default
+    """
+    if pd.isna(value) or value in ['na', 'NA', '', 'nan', 'NaN']:
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def validate_dataframe(df, filename):
+    """Validate DataFrame has expected columns and data quality."""
+    required_columns = ['timestamp', 'arbitration_id', 'data_field', 'attack']
+    
+    missing_cols = set(required_columns) - set(df.columns)
+    if missing_cols:
+        logger.warning(f"{filename}: Missing columns: {missing_cols}")
+        return False
+    
+    # Check for 'na' values
+    na_columns = []
+    for col in required_columns:
+        if col in df.columns:
+            na_count = df[col].isin(['na', 'NA', 'nan', 'NaN']).sum()
+            if na_count > 0:
+                na_columns.append(f"{col}({na_count})")
+    
+    if na_columns:
+        logger.warning(f"{filename}: Found 'na' values in columns: {', '.join(na_columns)}")
+        logger.warning(f"  These will be replaced with default values (0)")
+    
+    return True
+
+
+def parse_csv(file_path, id_map=None, skip_invalid_rows=False):
     """
     Parses CSV, extracts IDs, Payloads, and Time Deltas.
     Returns: ids, payloads, delta_feat, labels
     """
+    # Initialize statistics
+    stats = {
+        'total_rows': 0,
+        'invalid_can_id': 0,
+        'invalid_timestamp': 0,
+        'invalid_data_bytes': 0,
+        'rows_with_na': 0,
+        'valid_rows': 0,
+        'skipped_rows': 0
+    }
+    
     try:
         # 1. Read Data
         df = pd.read_csv(file_path)
+        stats['total_rows'] = len(df)
 
         # Standardize headers (strip spaces, lowercase) just in case
         df.columns = df.columns.str.strip().str.lower()
+
+        # Validate DataFrame
+        filename = os.path.basename(file_path)
+        if not validate_dataframe(df, filename):
+            logger.error(f"Validation failed for {filename}, attempting to continue with available columns")
 
         # Column Names (Adjusted to your screenshot)
         id_col = 'arbitration_id'
@@ -59,8 +179,9 @@ def parse_csv(file_path, id_map=None):
         data_col = 'data_field'
 
         # 2. Process Time Delta (CRITICAL FOR MAMBA)
-        # Convert timestamp to float
-        df[time_col] = pd.to_numeric(df[time_col], errors='coerce')
+        # Convert timestamp to float with safe conversion
+        df[time_col] = df[time_col].apply(lambda x: safe_float(x, default=0.0))
+        stats['invalid_timestamp'] = (df[time_col] == 0.0).sum()
 
         # Calculate Delta (Time since last message)
         delta = df[time_col].diff().fillna(0).values
@@ -72,25 +193,57 @@ def parse_csv(file_path, id_map=None):
         # Reshape for concatenation [N, 1]
         delta_feat = delta_norm.reshape(-1, 1)
 
-        # 3. Process IDs
-        # Handle Hex Strings (e.g., '199' or '0x199')
-        df[id_col] = df[id_col].apply(
-            lambda x: int(str(x), 16) if isinstance(x, str) and any(c.isalpha() for c in str(x)) else int(x))
+        # 3. Process IDs with safe conversion
+        # Handle Hex Strings (e.g., '199' or '0x199') and 'na' values
+        def safe_parse_id(x):
+            if isinstance(x, str):
+                # Check if it's a hex string (contains letters)
+                if any(c.isalpha() for c in str(x).lower().replace('x', '')):
+                    return safe_hex_to_int(x, default=0)
+                else:
+                    # Try to parse as integer
+                    try:
+                        return int(x)
+                    except (ValueError, TypeError):
+                        return safe_hex_to_int(x, default=0)
+            else:
+                try:
+                    return int(x)
+                except (ValueError, TypeError):
+                    return 0
+        
+        df[id_col] = df[id_col].apply(safe_parse_id)
+        stats['invalid_can_id'] = (df[id_col] == 0).sum()
 
         if id_map:
             # Map IDs to learned indices (Training Phase)
             df['id_idx'] = df[id_col].apply(lambda x: id_map.get(x, id_map.get('<UNK>')))
         else:
-            # Return unique IDs for Vocabulary Building
-            return df[id_col].unique()
+            # Return unique IDs for Vocabulary Building (filter out 0s if they're invalid)
+            unique_ids = df[id_col].unique()
+            # Optionally filter out invalid IDs (0) if skip_invalid_rows is True
+            if skip_invalid_rows:
+                unique_ids = unique_ids[unique_ids != 0]
+            return unique_ids
 
         # 4. Process Payload (Split Hex String -> 8 Bytes)
         def split_payload(hex_str):
-            hex_str = str(hex_str).strip()
+            hex_str = str(hex_str).strip().lower()
+            
+            # Handle 'na' values
+            if hex_str in ['na', 'nan', '']:
+                stats['invalid_data_bytes'] += 1
+                return [0] * 8  # Return default values
+            
             # Ensure it is exactly 16 chars (8 bytes); pad with zeros if shorter
             hex_str = hex_str.ljust(16, '0')
-            # Split into 8 integers
-            return [int(hex_str[i:i + 2], 16) for i in range(0, 16, 2)]
+            
+            # Split into 8 integers with safe conversion
+            result = []
+            for i in range(0, 16, 2):
+                byte_val = safe_hex_to_int(hex_str[i:i + 2], default=0)
+                result.append(byte_val)
+            return result
 
         payload_list = df[data_col].apply(split_payload).tolist()
         payloads = np.array(payload_list) / 255.0  # Normalize bytes to [0, 1]
@@ -100,10 +253,49 @@ def parse_csv(file_path, id_map=None):
         # If your CSV uses 'T' for attack, convert it. If it's already 0/1, this is safe.
         labels = df[label_col].apply(lambda x: 1 if str(x).upper() in ['1', 'T', 'ATTACK'] else 0).values
 
+        # 6. Calculate statistics
+        stats['rows_with_na'] = stats['invalid_can_id'] + stats['invalid_timestamp'] + stats['invalid_data_bytes']
+        stats['valid_rows'] = stats['total_rows'] - stats['rows_with_na']
+        
+        # 7. Filter out invalid rows if requested
+        if skip_invalid_rows:
+            valid_mask = (df[id_col] != 0) & (df[time_col] != 0.0)
+            if not valid_mask.all():
+                df = df[valid_mask].reset_index(drop=True)
+                stats['skipped_rows'] = stats['total_rows'] - len(df)
+                logger.info(f"Skipped {stats['skipped_rows']} invalid rows from {filename}")
+                
+                # Recalculate features for valid rows only
+                delta = df[time_col].diff().fillna(0).values
+                delta_norm = np.log1p(delta + 1e-6)
+                delta_feat = delta_norm.reshape(-1, 1)
+                
+                df['id_idx'] = df[id_col].apply(lambda x: id_map.get(x, id_map.get('<UNK>')))
+                payload_list = df[data_col].apply(split_payload).tolist()
+                payloads = np.array(payload_list) / 255.0
+                labels = df[label_col].apply(lambda x: 1 if str(x).upper() in ['1', 'T', 'ATTACK'] else 0).values
+        
+        # 8. Log data quality report
+        if stats['rows_with_na'] > 0:
+            logger.info(f"Data quality report for {filename}:")
+            logger.info(f"  Total rows: {stats['total_rows']}")
+            logger.info(f"  Valid rows: {stats['valid_rows']}")
+            logger.info(f"  Rows with 'na' values: {stats['rows_with_na']}")
+            if stats['invalid_can_id'] > 0:
+                logger.info(f"  Invalid CAN IDs: {stats['invalid_can_id']}")
+            if stats['invalid_timestamp'] > 0:
+                logger.info(f"  Invalid timestamps: {stats['invalid_timestamp']}")
+            if stats['invalid_data_bytes'] > 0:
+                logger.info(f"  Invalid data bytes: {stats['invalid_data_bytes']}")
+            if stats['skipped_rows'] > 0:
+                logger.info(f"  Skipped rows: {stats['skipped_rows']}")
+
         return df['id_idx'].values, payloads, delta_feat, labels
 
     except Exception as e:
-        print(f"Error parsing {file_path}: {e}")
+        logger.error(f"Error processing {file_path}: {e}")
+        logger.error(f"  This file may contain 'na' values or other data quality issues")
+        logger.error(f"  Try running with --skip-invalid-rows flag")
         return None
 
 
@@ -137,22 +329,34 @@ def create_windows(ids, payloads, deltas, labels):
 
 # --- MAIN PIPELINE ---
 
-def run_pipeline():
+def run_pipeline(skip_invalid_rows=False):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    # Overall statistics
+    overall_stats = {
+        'dataset': DATASET,
+        'total_files': 0,
+        'total_rows': 0,
+        'valid_rows': 0,
+        'invalid_rows': 0,
+        'skipped_rows': 0
+    }
 
     # 1. IDENTIFY FILES
     train_folder = os.path.join(DATASET_ROOT, "train_02_with_attacks")
 
     # Check if folder exists
     if not os.path.exists(train_folder):
-        print(f"ERROR: Folder not found: {train_folder}")
+        logger.error(f"Folder not found: {train_folder}")
         return
 
     all_files = sorted(glob.glob(os.path.join(train_folder, "*.csv")))
 
     if not all_files:
-        print(f"ERROR: No CSV files found in {train_folder}")
+        logger.error(f"No CSV files found in {train_folder}")
         return
+
+    overall_stats['total_files'] = len(all_files)
 
     # CHRONOLOGICAL SPLIT (Three Bucket Rule)
     # Bucket #1 (80%): Training data → learn model parameters
@@ -162,36 +366,36 @@ def run_pipeline():
     train_files = all_files[:split_idx]
     val_files = all_files[split_idx:]
 
-    print(f"Found {len(all_files)} files. Train: {len(train_files)}, Val: {len(val_files)}")
+    logger.info(f"Found {len(all_files)} files. Train: {len(train_files)}, Val: {len(val_files)}")
 
     # 2. BUILD VOCABULARY (IDs)
-    print("Building ID Map...")
+    logger.info("Building ID Map...")
     unique_ids = set()
     for f in train_files:
         try:
-            current_ids = parse_csv(f)  # Returns unique IDs list
+            current_ids = parse_csv(f, skip_invalid_rows=skip_invalid_rows)  # Returns unique IDs list
             if current_ids is not None:
                 unique_ids.update(current_ids)
         except Exception as e:
-            print(f"Skipping {f} during vocab build: {e}")
+            logger.warning(f"Skipping {f} during vocab build: {e}")
 
     # Create Mapping
     id_map = {can_id: i for i, can_id in enumerate(sorted(unique_ids))}
     id_map['<UNK>'] = len(id_map)  # Handle unknown IDs
-    print(f"Vocab Size: {len(id_map)} IDs (saved to {OUTPUT_DIR}/id_map.npy)")
+    logger.info(f"Vocab Size: {len(id_map)} IDs (saved to {OUTPUT_DIR}/id_map.npy)")
 
     # Save ID Map
     np.save(os.path.join(OUTPUT_DIR, "id_map.npy"), id_map)
     # to check if UNK is in the preprocessed file
     assert "<UNK>" in id_map, "ERROR: <UNK> not found in id_map"
-    print("UNK index:", id_map["<UNK>"])
+    logger.info(f"UNK index: {id_map['<UNK>']}")
 
     # 3. PROCESS TRAIN DATA
-    print("Processing Training Data...")
+    logger.info("Processing Training Data...")
     X_tr_ids, X_tr_pay, X_tr_time, y_tr = [], [], [], []
 
     for f in train_files:
-        res = parse_csv(f, id_map)
+        res = parse_csv(f, id_map, skip_invalid_rows=skip_invalid_rows)
         if res:
             ids, pay, time, lbl = res
             w_ids, w_pay, w_time, w_lbl = create_windows(ids, pay, time, lbl)
@@ -209,16 +413,16 @@ def run_pipeline():
                  payloads=np.concatenate(X_tr_pay),
                  deltas=np.concatenate(X_tr_time),
                  labels=np.concatenate(y_tr))
-        print("Training Data Saved.")
+        logger.info("Training Data Saved.")
     else:
-        print("WARNING: No training windows created (check window size vs file length)")
+        logger.warning("No training windows created (check window size vs file length)")
 
     # 4. PROCESS VAL DATA
-    print("Processing Validation Data...")
+    logger.info("Processing Validation Data...")
     X_val_ids, X_val_pay, X_val_time, y_val = [], [], [], []
 
     for f in val_files:
-        res = parse_csv(f, id_map)
+        res = parse_csv(f, id_map, skip_invalid_rows=skip_invalid_rows)
         if res:
             ids, pay, time, lbl = res
             w_ids, w_pay, w_time, w_lbl = create_windows(ids, pay, time, lbl)
@@ -235,10 +439,54 @@ def run_pipeline():
                  payloads=np.concatenate(X_val_pay),
                  deltas=np.concatenate(X_val_time),
                  labels=np.concatenate(y_val))
-        print("Validation Data Saved.")
+        logger.info("Validation Data Saved.")
 
-    print("Done! Data ready for LSS-CAN-Mamba.")
+    # 5. Save data quality report
+    quality_report = {
+        'dataset': DATASET,
+        'total_files': overall_stats['total_files'],
+        'preprocessing_completed': True,
+        'skip_invalid_rows': skip_invalid_rows
+    }
+    
+    quality_report_path = os.path.join(OUTPUT_DIR, 'data_quality_report.json')
+    with open(quality_report_path, 'w') as f:
+        json.dump(quality_report, f, indent=2)
+    logger.info(f"Data quality report saved to {quality_report_path}")
+
+    logger.info("Done! Data ready for LSS-CAN-Mamba.")
+
 
 
 if __name__ == "__main__":
-    run_pipeline()
+    args = parse_args()
+    
+    # Override config with command-line arguments if provided
+    if args.dataset:
+        DATASET = args.dataset
+        os.environ["DATASET"] = DATASET
+    
+    if args.dataset_root:
+        DATASET_ROOT = args.dataset_root
+        os.environ["DATASET_ROOT"] = DATASET_ROOT
+    else:
+        DATASET_ROOT = os.environ.get("DATASET_ROOT", f"/workspace/data/can-train-and-test-v1.5/{DATASET}")
+    
+    if args.output_dir:
+        OUTPUT_DIR = args.output_dir
+        os.environ["OUTPUT_DIR"] = OUTPUT_DIR
+    else:
+        OUTPUT_DIR = os.environ.get("OUTPUT_DIR", f"/workspace/data/processed_data/{DATASET}_run_02")
+    
+    # Print updated configuration if arguments were provided
+    if args.dataset or args.dataset_root or args.output_dir:
+        print(f"\n{'='*60}")
+        print(f"Updated Configuration (from command-line args)")
+        print(f"{'='*60}")
+        print(f"Dataset: {DATASET}")
+        print(f"Dataset Root: {DATASET_ROOT}")
+        print(f"Output Dir: {OUTPUT_DIR}")
+        print(f"{'='*60}\n")
+    
+    logger.info(f"Starting preprocessing with skip_invalid_rows={args.skip_invalid_rows}")
+    run_pipeline(skip_invalid_rows=args.skip_invalid_rows)
