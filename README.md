@@ -39,25 +39,22 @@ CAN-LSS-Mamba is a state-of-the-art intrusion detection system for automotive CA
 
 ## 🚀 Workflow: GitHub Codespaces → vast.ai
 
-This project supports a modern ML research workflow:
+This project supports a modern ML research workflow optimized for **terminal usage**:
 
-### 1. Edit Code (GitHub Codespaces)
+### 1. Edit Code (GitHub Codespaces or Local)
 - Make changes in Codespaces or locally
 - Commit and push to GitHub
 - No GPU required for development
 
-### 2. Run on vast.ai
+### 2. Run on vast.ai Terminal
 ```bash
-# In vast.ai Jupyter terminal
+# In vast.ai terminal (not Jupyter)
 cd /workspace
 git clone https://github.com/jhoshcinco/can-lss-mamba.git
 cd can-lss-mamba
 bash setup.sh
 
-# Option A: Use Jupyter notebook (Recommended)
-jupyter lab notebooks/vastai_workflow.ipynb
-
-# Option B: Use terminal
+# Run the complete pipeline
 python preprocessing/CAN_preprocess.py
 python train.py
 python evaluate.py
@@ -66,6 +63,8 @@ python evaluate.py
 ### 3. Track Results
 - View training in real-time: https://wandb.ai/YOUR_USERNAME/can-lss-mamba
 - Checkpoints auto-saved to WandB (won't lose them when instance terminates!)
+
+> 📘 **For detailed terminal instructions, see [TERMINAL_QUICKSTART.md](TERMINAL_QUICKSTART.md)**
 
 ## 🏁 Quick Start
 
@@ -198,7 +197,7 @@ WINDOW_SIZE=128 STRIDE=64 python scripts/preprocess.py
 
 ### Training
 ```bash
-# Basic training
+# Basic training (terminal)
 python train.py
 
 # With WandB tracking
@@ -209,18 +208,26 @@ BATCH_SIZE=64 EPOCHS=50 LR=0.001 python train.py
 
 # Using wrapper script with config
 python scripts/train.py
+
+# Background training (terminal)
+nohup python train.py > training.log 2>&1 &
+tail -f training.log  # Monitor progress
 ```
 
 ### Evaluation
 ```bash
-# Evaluate on test sets
+# Evaluate on test sets (terminal)
 python evaluate.py
 
 # Using wrapper script
 python scripts/evaluate.py
+
+# View results
+cat /workspace/final_thesis_results_02.csv
 ```
 
-### Jupyter Notebook
+### Optional: Jupyter Notebook
+If you prefer Jupyter (optional):
 ```bash
 # Start Jupyter Lab
 jupyter lab
