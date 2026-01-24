@@ -1,0 +1,50 @@
+# WandB Sweep Configuration for Bayesian Optimization
+# Uses validation F1 (Bucket 2) as optimization metric
+# This prevents data leakage by not using test results for optimization
+
+program: train.py
+method: bayes  # Bayesian optimization (smarter than grid search)
+
+metric:
+  name: val/f1
+  goal: maximize
+
+parameters:
+  learning_rate:
+    min: 0.00001
+    max: 0.001
+    distribution: log_uniform
+    
+  batch_size:
+    values: [32, 64, 128]
+    
+  epochs:
+    values: [20, 30, 50]
+    
+  early_stop_patience:
+    values: [5, 10, 15]
+    
+  id_dropout_prob:
+    min: 0.0
+    max: 0.2
+    distribution: uniform
+
+# WandB configuration
+project: can-lss-mamba
+entity: jhoshcinco-ca-western-university
+
+# Run configuration
+command:
+  - ${env}
+  - python
+  - ${program}
+  - ${args_no_hyphens}
+
+# Tags for organization
+run_cap: 50  # Maximum number of runs
+
+# Early termination for bad runs
+early_terminate:
+  type: hyperband
+  min_iter: 5
+  eta: 2

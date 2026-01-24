@@ -1,6 +1,7 @@
 #!/bin/bash
 # setup.sh - Run this once after cloning on vast.ai or local environment
 # This script creates all required directories and installs dependencies
+# Smart dependency checking for Docker environments
 
 set -e  # Exit on error
 
@@ -8,7 +9,16 @@ echo "============================================================"
 echo "🚀 Setting up CAN-LSS-Mamba environment..."
 echo "============================================================"
 
-# Detect environment
+# 1. Detect environment
+if [ -f /.dockerenv ]; then
+    echo "✓ Running in Docker container"
+    IN_DOCKER=true
+else
+    echo "✓ Running on host system"
+    IN_DOCKER=false
+fi
+
+# Detect vast.ai vs local
 if [ -d "/workspace" ]; then
     echo "📍 Detected vast.ai environment (using /workspace)"
     BASE_DIR="/workspace"
@@ -17,6 +27,18 @@ else
     echo "📍 Detected local/Codespaces environment (using ./)"
     BASE_DIR="."
     CONFIG_FILE="configs/codespaces.yaml"
+fi
+
+# 2. Check if using jhoshcinco/can-mamba Docker image
+if command -v docker &> /dev/null; then
+    if docker images 2>/dev/null | grep -q "jhoshcinco/can-mamba"; then
+        echo "✓ Detected jhoshcinco/can-mamba Docker image"
+        USING_CUSTOM_IMAGE=true
+    else
+        USING_CUSTOM_IMAGE=false
+    fi
+else
+    USING_CUSTOM_IMAGE=false
 fi
 
 echo ""
@@ -52,15 +74,42 @@ if ! command -v pip &> /dev/null; then
     exit 1
 fi
 
-# Upgrade pip
-echo "Upgrading pip..."
-pip install --upgrade pip setuptools wheel
+# 3. Smart dependency checking
+echo "Checking dependencies..."
 
-# Install requirements
-echo "Installing requirements from requirements.txt..."
-pip install -r requirements.txt
+check_package() {
+    python -c "import $1" 2>/dev/null && return 0 || return 1
+}
 
-echo "✅ Dependencies installed successfully"
+NEED_INSTALL=false
+
+# Check core packages
+for pkg in torch pandas sklearn mamba_ssm wandb omegaconf; do
+    if check_package $pkg; then
+        echo "✓ $pkg already installed"
+    else
+        echo "⚠️  $pkg not found"
+        NEED_INSTALL=true
+    fi
+done
+
+# 4. Install only if needed
+if [ "$NEED_INSTALL" = true ]; then
+    echo ""
+    echo "⚙️  Installing missing dependencies..."
+    
+    # Upgrade pip
+    echo "Upgrading pip..."
+    pip install --upgrade pip setuptools wheel
+    
+    # Install requirements
+    echo "Installing requirements from requirements.txt..."
+    pip install -r requirements.txt
+    
+    echo "✅ Dependencies installed"
+else
+    echo "✅ All dependencies already installed (skipping)"
+fi
 
 echo ""
 echo "============================================================"
