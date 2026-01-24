@@ -57,6 +57,9 @@ def get_checkpoint_dir(dataset_name, hyperparams):
     """
     Generate unique checkpoint directory for hyperparameter configuration.
     
+    Uses key hyperparameters (batch_size, learning_rate, epochs, id_dropout_prob)
+    to create a unique directory name. This ensures each config trains independently.
+    
     Args:
         dataset_name: Name of dataset
         hyperparams: Dictionary of hyperparameters
@@ -70,6 +73,7 @@ def get_checkpoint_dir(dataset_name, hyperparams):
     dropout = hyperparams.get('id_dropout_prob', 0.0)
     
     # Create unique dir name based on hyperparameters
+    # Format chosen for readability and sorting
     dir_name = f"grid_bs{batch_size}_lr{lr}_ep{epochs}_drop{dropout}"
     return os.path.join("/workspace/checkpoints", dataset_name, dir_name)
 
@@ -103,6 +107,7 @@ def run_experiment(dataset_name, dataset_config, hyperparams, exp_num, total_exp
     env = os.environ.copy()
     env['DATA_DIR'] = dataset_config['processed']
     env['OUT_DIR'] = checkpoint_dir  # Use unique checkpoint directory
+    # Use consistent model name; checkpoint_dir already identifies the experiment
     env['MODEL_NAME'] = f"lss_can_mamba"
     
     # Set hyperparameters

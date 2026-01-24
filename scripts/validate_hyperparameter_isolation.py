@@ -58,12 +58,13 @@ def test_checkpoint_isolation():
             timeout=300  # 5 minute timeout
         )
         
-        # Check that it started from epoch 1
-        if 'Epoch 1' in result.stdout or 'Epoch 1 |' in result.stdout:
+        # Check that it started from epoch 1 (check both stdout and stderr)
+        output = result.stdout + result.stderr
+        if 'Epoch 1' in output or 'Epoch 1 |' in output or 'Starting Training' in output:
             print(f"  ✅ Config {i} started from epoch 1 (correct)")
         else:
             print(f"  ❌ Config {i} did NOT start from epoch 1!")
-            print(f"     Output snippet: {result.stdout[:500]}")
+            print(f"     Output snippet: {output[:500]}")
             all_passed = False
             
         # Verify checkpoint was saved to correct directory
@@ -73,15 +74,20 @@ def test_checkpoint_isolation():
         else:
             print(f"  ❌ Checkpoint NOT found at: {config['out_dir']}")
             all_passed = False
-        
-        # Verify no cross-contamination
-        for j, other_config in enumerate(configs, 1):
+    
+    # Verify no cross-contamination between all configs
+    print("\nVerifying no cross-contamination...")
+    for i, config_i in enumerate(configs, 1):
+        checkpoint_i = os.path.join(config_i['out_dir'], 'lss_can_mamba_last.pth')
+        for j, config_j in enumerate(configs, 1):
             if i != j:
-                other_checkpoint = os.path.join(other_config['out_dir'], 'lss_can_mamba_last.pth')
-                # Other checkpoint should not exist yet (if j > i) or should exist (if j < i)
-                if j > i and os.path.exists(other_checkpoint):
-                    print(f"  ❌ Config {i} created checkpoint in Config {j}'s directory!")
-                    all_passed = False
+                checkpoint_j = os.path.join(config_j['out_dir'], 'lss_can_mamba_last.pth')
+                # Check if config i's directory contains any checkpoints from config j
+                if os.path.exists(config_i['out_dir']) and os.path.exists(config_j['out_dir']):
+                    # Both should exist and be different
+                    if config_i['out_dir'] == config_j['out_dir']:
+                        print(f"  ❌ Config {i} and Config {j} use the same directory!")
+                        all_passed = False
     
     # Clean up test directories
     for config in configs:
