@@ -1,5 +1,41 @@
 # Hyperparameter Tuning Guide
 
+## ⚠️ CRITICAL: Checkpoint Isolation
+
+**When testing different hyperparameter configurations, each config MUST train from scratch with fresh model initialization.**
+
+### Common Mistake
+```bash
+# ❌ WRONG - All configs share same checkpoint directory
+BATCH_SIZE=32 LR=0.0001 python train.py
+BATCH_SIZE=64 LR=0.0005 python train.py  # Resumes from previous config!
+```
+
+**Problem**: The second configuration resumes training from the first configuration's checkpoint instead of starting fresh. This makes hyperparameter comparisons invalid because you're comparing:
+- Config 1: Fresh training for 20 epochs
+- Config 2: Continued training for epochs 21-40 with different hyperparameters
+
+### Correct Approach
+```bash
+# ✅ CORRECT - Each config has unique checkpoint directory
+OUT_DIR=/workspace/checkpoints/bs32_lr0.0001 BATCH_SIZE=32 LR=0.0001 python train.py
+OUT_DIR=/workspace/checkpoints/bs64_lr0.0005 BATCH_SIZE=64 LR=0.0005 python train.py
+```
+
+### Best Practice
+**Use the provided scripts** which handle checkpoint isolation automatically:
+- `scripts/grid_search.py` - Automatic unique directories per config
+- `scripts/quick_test.sh` - Automatic unique directories per learning rate
+- Manual training - Always specify unique `OUT_DIR` for each config
+
+### Validation
+Test checkpoint isolation is working:
+```bash
+python scripts/validate_hyperparameter_isolation.py
+```
+
+---
+
 ## Overview
 
 This guide explains how to systematically tune hyperparameters for CAN-LSS-Mamba using **validation metrics only** to avoid data leakage.

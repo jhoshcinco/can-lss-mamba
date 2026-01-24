@@ -53,6 +53,27 @@ def load_datasets_config():
         return yaml.safe_load(f)
 
 
+def get_checkpoint_dir(dataset_name, hyperparams):
+    """
+    Generate unique checkpoint directory for hyperparameter configuration.
+    
+    Args:
+        dataset_name: Name of dataset
+        hyperparams: Dictionary of hyperparameters
+    
+    Returns:
+        str: Unique checkpoint directory path
+    """
+    batch_size = hyperparams.get('batch_size', 32)
+    lr = hyperparams.get('learning_rate', 0.0001)
+    epochs = hyperparams.get('epochs', 20)
+    dropout = hyperparams.get('id_dropout_prob', 0.0)
+    
+    # Create unique dir name based on hyperparameters
+    dir_name = f"grid_bs{batch_size}_lr{lr}_ep{epochs}_drop{dropout}"
+    return os.path.join("/workspace/checkpoints", dataset_name, dir_name)
+
+
 def run_experiment(dataset_name, dataset_config, hyperparams, exp_num, total_exp):
     """
     Run single training experiment with given hyperparameters.
@@ -75,11 +96,14 @@ def run_experiment(dataset_name, dataset_config, hyperparams, exp_num, total_exp
     for key, value in hyperparams.items():
         print(f"  {key}: {value}")
     
+    # Generate unique checkpoint directory for this config
+    checkpoint_dir = get_checkpoint_dir(dataset_name, hyperparams)
+    
     # Set environment variables
     env = os.environ.copy()
     env['DATA_DIR'] = dataset_config['processed']
-    env['OUT_DIR'] = f"/workspace/checkpoints/grid_search/{dataset_name}/exp_{exp_num}"
-    env['MODEL_NAME'] = f"lss_can_mamba_exp_{exp_num}"
+    env['OUT_DIR'] = checkpoint_dir  # Use unique checkpoint directory
+    env['MODEL_NAME'] = f"lss_can_mamba"
     
     # Set hyperparameters
     env['BATCH_SIZE'] = str(hyperparams['batch_size'])
@@ -88,12 +112,18 @@ def run_experiment(dataset_name, dataset_config, hyperparams, exp_num, total_exp
     env['EARLY_STOP_PATIENCE'] = str(hyperparams['early_stop_patience'])
     env['ID_DROPOUT_PROB'] = str(hyperparams.get('id_dropout_prob', 0.0))
     
+    # Create descriptive run name for WandB
+    batch_size = hyperparams['batch_size']
+    lr = hyperparams['learning_rate']
+    epochs = hyperparams['epochs']
+    run_name = f"grid_bs{batch_size}_lr{lr}_ep{epochs}"
+    
     # Enable WandB with proper tags
     env['WANDB_ENABLED'] = 'true'
     env['WANDB_PROJECT'] = 'can-lss-mamba'
     env['WANDB_ENTITY'] = 'jhoshcinco-ca-western-university'
     env['WANDB_TAGS'] = f"hyperparameter_search,grid_search_{dataset_name}"
-    env['WANDB_NAME'] = f"grid_exp_{exp_num}_{hyperparams['learning_rate']}_{hyperparams['batch_size']}"
+    env['WANDB_NAME'] = run_name
     
     # Run training
     result = subprocess.run(

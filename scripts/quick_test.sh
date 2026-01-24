@@ -39,6 +39,8 @@ for lr in "${LR_VALUES[@]}"; do
     echo "[$COUNTER/$TOTAL] Testing LR=$lr"
     echo "------------------------------------------------------------"
     
+    # Use unique checkpoint directory per learning rate
+    OUT_DIR=/workspace/checkpoints/quick_test_lr${lr} \
     DATASET=$DATASET \
     BATCH_SIZE=$BATCH_SIZE \
     EPOCHS=$EPOCHS \

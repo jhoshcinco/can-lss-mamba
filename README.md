@@ -275,15 +275,21 @@ cat /workspace/results/cross_dataset_matrix_*.csv
 
 Systematically find the best hyperparameters using validation metrics only (no data leakage):
 
-```bash
-# Quick test (3 experiments, ~1 hour)
-bash scripts/quick_test.sh
+**⚠️ CRITICAL: Always use unique checkpoint directories for each hyperparameter configuration!**
 
-# Grid search (full exploration)
+```bash
+# Automated Grid Search (Recommended - handles checkpoint isolation automatically)
 python scripts/grid_search.py --dataset set_01 \
   --batch-sizes 32,64,128 \
   --learning-rates 0.0001,0.0005,0.001 \
   --epochs 20,30,50
+
+# Quick Test (3 learning rates, automatic checkpoint isolation)
+bash scripts/quick_test.sh
+
+# Manual Testing (IMPORTANT: Always use unique OUT_DIR per config)
+OUT_DIR=/workspace/checkpoints/config1 LR=0.0001 python train.py
+OUT_DIR=/workspace/checkpoints/config2 LR=0.0005 python train.py
 
 # Compare results
 python scripts/compare_runs.py --tag hyperparameter_search
@@ -292,6 +298,8 @@ python scripts/compare_runs.py --tag hyperparameter_search
 wandb sweep configs/sweep.yaml
 wandb agent <sweep-id>
 ```
+
+**Why unique checkpoint directories matter**: Different hyperparameter configurations must start from scratch with fresh model weights. Sharing checkpoint directories causes configs to resume from each other's checkpoints, making comparisons invalid.
 
 📖 [Read the full guide](docs/hyperparameter_tuning.md)
 

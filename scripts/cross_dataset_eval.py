@@ -70,7 +70,8 @@ def train_model(dataset_name, config, batch_size=32, lr=0.0001, epochs=20,
     # Set environment variables for training
     env = os.environ.copy()
     env['DATA_DIR'] = config['processed']
-    env['OUT_DIR'] = f"/workspace/checkpoints/{dataset_name}"
+    # Unique checkpoint directory per train dataset
+    env['OUT_DIR'] = f"/workspace/checkpoints/cross_eval_train_{dataset_name}"
     env['MODEL_NAME'] = f"lss_can_mamba_{dataset_name}"
     env['BATCH_SIZE'] = str(batch_size)
     env['EPOCHS'] = str(epochs)
@@ -126,8 +127,8 @@ def evaluate_model(train_dataset, test_dataset, train_config, test_config):
     # Set environment variables for evaluation
     env = os.environ.copy()
     env['DATASET_ROOT'] = test_config['raw']
-    env['MODEL_PATH'] = f"/workspace/checkpoints/{train_dataset}/lss_can_mamba_{train_dataset}_best.pth"
-    env['CHECKPOINT_PATH'] = f"/workspace/checkpoints/{train_dataset}/lss_can_mamba_{train_dataset}_last.pth"
+    env['MODEL_PATH'] = f"/workspace/checkpoints/cross_eval_train_{train_dataset}/lss_can_mamba_{train_dataset}_best.pth"
+    env['CHECKPOINT_PATH'] = f"/workspace/checkpoints/cross_eval_train_{train_dataset}/lss_can_mamba_{train_dataset}_last.pth"
     env['ID_MAP_PATH'] = f"{train_config['processed']}/id_map.npy"
     output_csv = f"/workspace/results/cross_eval_{train_dataset}_on_{test_dataset}.csv"
     env['OUTPUT_CSV'] = output_csv
