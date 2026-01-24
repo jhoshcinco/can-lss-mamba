@@ -113,29 +113,7 @@ def test_validate_dataframe():
 
 def test_split_payload_with_na():
     """Test that split_payload handles 'na' values correctly."""
-    import pandas as pd
-    
-    # We can't import split_payload directly since it's defined inside parse_csv
-    # But we can test the logic separately
-    def split_payload(hex_str):
-        """Local version for testing."""
-        from preprocessing.CAN_preprocess import safe_hex_to_int
-        
-        hex_str = str(hex_str).strip().lower()
-        
-        # Handle 'na' values
-        if hex_str in ['na', 'nan', '']:
-            return [0] * 8  # Return default values
-        
-        # Ensure it is exactly 16 chars (8 bytes); pad with zeros if shorter
-        hex_str = hex_str.ljust(16, '0')
-        
-        # Split into 8 integers with safe conversion
-        result = []
-        for i in range(0, 16, 2):
-            byte_val = safe_hex_to_int(hex_str[i:i + 2], default=0)
-            result.append(byte_val)
-        return result
+    from preprocessing.CAN_preprocess import split_payload
     
     # Test valid payload
     result = split_payload('0011223344556677')

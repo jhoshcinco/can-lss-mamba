@@ -31,8 +31,10 @@ def test_functions_exist():
         content = f.read()
     
     required_functions = [
+        'is_na_value',
         'safe_hex_to_int',
         'safe_float',
+        'split_payload',
         'validate_dataframe',
         'parse_csv',
         'create_windows',

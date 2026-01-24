@@ -134,6 +134,33 @@ def safe_float(value, default=0.0):
         return default
 
 
+def split_payload(hex_str):
+    """
+    Split hex payload string into 8 bytes.
+    
+    Args:
+        hex_str: Hexadecimal payload string (e.g., '0011223344556677')
+        
+    Returns:
+        List of 8 integers representing bytes
+    """
+    hex_str = str(hex_str).strip().lower()
+    
+    # Handle 'na' values
+    if hex_str in ['na', 'nan', '']:
+        return [0] * 8  # Return default values
+    
+    # Ensure it is exactly 16 chars (8 bytes); pad with zeros if shorter
+    hex_str = hex_str.ljust(16, '0')
+    
+    # Split into 8 integers with safe conversion
+    result = []
+    for i in range(0, 16, 2):
+        byte_val = safe_hex_to_int(hex_str[i:i + 2], default=0)
+        result.append(byte_val)
+    return result
+
+
 def validate_dataframe(df, filename):
     """Validate DataFrame has expected columns and data quality."""
     required_columns = ['timestamp', 'arbitration_id', 'data_field', 'attack']
@@ -242,25 +269,13 @@ def parse_csv(file_path, id_map=None, skip_invalid_rows=False):
             return unique_ids
 
         # 4. Process Payload (Split Hex String -> 8 Bytes)
-        def split_payload(hex_str):
-            hex_str = str(hex_str).strip().lower()
-            
-            # Handle 'na' values
-            if hex_str in ['na', 'nan', '']:
-                stats['invalid_data_bytes'] += 1
-                return [0] * 8  # Return default values
-            
-            # Ensure it is exactly 16 chars (8 bytes); pad with zeros if shorter
-            hex_str = hex_str.ljust(16, '0')
-            
-            # Split into 8 integers with safe conversion
-            result = []
-            for i in range(0, 16, 2):
-                byte_val = safe_hex_to_int(hex_str[i:i + 2], default=0)
-                result.append(byte_val)
-            return result
-
         payload_list = df[data_col].apply(split_payload).tolist()
+        
+        # Count invalid data bytes
+        for payload in payload_list:
+            if payload == [0] * 8:
+                stats['invalid_data_bytes'] += 1
+        
         payloads = np.array(payload_list) / 255.0  # Normalize bytes to [0, 1]
 
         # 5. Process Labels
@@ -269,14 +284,10 @@ def parse_csv(file_path, id_map=None, skip_invalid_rows=False):
         labels = df[label_col].apply(lambda x: 1 if str(x).upper() in ['1', 'T', 'ATTACK'] else 0).values
 
         # 6. Calculate statistics
-        # Note: rows_with_na counts total invalid field instances, not unique rows
-        # This helps identify which fields are most problematic
-        stats['total_invalid_fields'] = stats['invalid_can_id'] + stats['invalid_timestamp'] + stats['invalid_data_bytes']
-        
-        # Count actual rows with at least one invalid field
+        # Count unique rows with at least one invalid field
         has_invalid_id = (df[id_col] == 0)
         has_invalid_time = (df[time_col] == 0.0)
-        has_invalid_data = False  # We can't easily track this per-row without refactoring
+        # Note: Invalid data bytes are tracked globally, not per-row due to implementation constraints
         stats['rows_with_na'] = (has_invalid_id | has_invalid_time).sum()
         stats['valid_rows'] = stats['total_rows'] - stats['rows_with_na']
         
