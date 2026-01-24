@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  # Training service
+  train:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jhoshcinco/can-mamba:latest
+    container_name: can-lss-mamba-train
+    volumes:
+      # Mount data directory
+      - ./data:/workspace/data
+      # Mount checkpoints directory
+      - ./checkpoints:/workspace/checkpoints
+      # Mount results directory
+      - ./results:/workspace/results
+      # Mount source code (read-only for safety)
+      - ./src:/workspace/src:ro
+      - ./scripts:/workspace/scripts:ro
+      - ./configs:/workspace/configs:ro
+    environment:
+      # GPU configuration
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      # WandB configuration
+      - WANDB_API_KEY=${WANDB_API_KEY}
+      - WANDB_PROJECT=${WANDB_PROJECT:-can-lss-mamba}
+      - WANDB_ENTITY=${WANDB_ENTITY}
+      # Configuration
+      - CONFIG_PATH=${CONFIG_PATH:-configs/default.yaml}
+      # Training parameters
+      - BATCH_SIZE=${BATCH_SIZE:-32}
+      - EPOCHS=${EPOCHS:-20}
+      - LR=${LR:-0.0001}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: python train.py
+    stdin_open: true
+    tty: true
+
+  # Preprocessing service
+  preprocess:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jhoshcinco/can-mamba:latest
+    container_name: can-lss-mamba-preprocess
+    volumes:
+      - ./data:/workspace/data
+      - ./preprocessing:/workspace/preprocessing:ro
+      - ./configs:/workspace/configs:ro
+    environment:
+      - CONFIG_PATH=${CONFIG_PATH:-configs/default.yaml}
+    command: python preprocessing/CAN_preprocess.py
+    stdin_open: true
+    tty: true
+
+  # Evaluation service
+  evaluate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jhoshcinco/can-mamba:latest
+    container_name: can-lss-mamba-evaluate
+    volumes:
+      - ./data:/workspace/data
+      - ./checkpoints:/workspace/checkpoints
+      - ./results:/workspace/results
+      - ./configs:/workspace/configs:ro
+    environment:
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      - CONFIG_PATH=${CONFIG_PATH:-configs/default.yaml}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: python evaluate.py
+    stdin_open: true
+    tty: true
+
+  # Jupyter notebook service
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jhoshcinco/can-mamba:latest
+    container_name: can-lss-mamba-jupyter
+    volumes:
+      - ./data:/workspace/data
+      - ./checkpoints:/workspace/checkpoints
+      - ./results:/workspace/results
+      - ./notebooks:/workspace/notebooks
+      - ./configs:/workspace/configs:ro
+    environment:
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      - WANDB_API_KEY=${WANDB_API_KEY}
+    ports:
+      - "8888:8888"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''
+    stdin_open: true
+    tty: true

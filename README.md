@@ -1,0 +1,410 @@
+# CAN-LSS-Mamba
+
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+A deep learning model for Controller Area Network (CAN) bus intrusion detection using Local State Space (LSS) and Mamba architecture.
+
+## 📋 Table of Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Workflow: GitHub Codespaces → vast.ai](#workflow-github-codespaces--vastai)
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Project Structure](#project-structure)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+
+## 🎯 Overview
+
+CAN-LSS-Mamba is a state-of-the-art intrusion detection system for automotive CAN bus networks. It leverages:
+
+- **Mamba State Space Models** for efficient sequence modeling
+- **Local-Global Feature Extraction** combining CNN and SSM
+- **Efficient Channel Attention (ECA)** for feature refinement
+- **Focal Loss** for handling class imbalance
+
+## ✨ Features
+
+- 🔧 **Configuration Management** - YAML-based configs for different environments
+- 📊 **Experiment Tracking** - Integrated Weights & Biases (WandB) support
+- 🐳 **Docker Support** - Containerized environment for reproducibility
+- 📓 **Jupyter Workflow** - Interactive notebook for vast.ai
+- 🔄 **Backwards Compatible** - Works with existing scripts and workflows
+- ⚙️ **Easy Setup** - One-command setup script for immediate use
+
+## 🚀 Workflow: GitHub Codespaces → vast.ai
+
+This project supports a modern ML research workflow:
+
+### 1. Edit Code (GitHub Codespaces)
+- Make changes in Codespaces or locally
+- Commit and push to GitHub
+- No GPU required for development
+
+### 2. Run on vast.ai
+```bash
+# In vast.ai Jupyter terminal
+cd /workspace
+git clone https://github.com/jhoshcinco/can-lss-mamba.git
+cd can-lss-mamba
+bash setup.sh
+
+# Option A: Use Jupyter notebook (Recommended)
+jupyter lab notebooks/vastai_workflow.ipynb
+
+# Option B: Use terminal
+python preprocessing/CAN_preprocess.py
+python train.py
+python evaluate.py
+```
+
+### 3. Track Results
+- View training in real-time: https://wandb.ai/YOUR_USERNAME/can-lss-mamba
+- Checkpoints auto-saved to WandB (won't lose them when instance terminates!)
+
+## 🏁 Quick Start
+
+### Prerequisites
+- Python 3.11+
+- CUDA-capable GPU (for training)
+- 16GB+ RAM recommended
+
+### 1. Clone Repository
+```bash
+git clone https://github.com/jhoshcinco/can-lss-mamba.git
+cd can-lss-mamba
+```
+
+### 2. Run Setup
+```bash
+bash setup.sh
+```
+
+This will:
+- ✅ Create all required directories
+- ✅ Install dependencies from `requirements.txt`
+- ✅ Verify your environment (GPU, packages)
+
+### 3. Configure Environment (Optional)
+```bash
+cp .env.example .env
+# Edit .env with your settings
+```
+
+### 4. Download Dataset
+Place your CAN dataset in:
+- vast.ai: `/workspace/data/can-train-and-test-v1.5/set_01/`
+- Local: `./data/can-train-and-test-v1.5/set_01/`
+
+### 5. Run Training
+```bash
+# Preprocess data
+python preprocessing/CAN_preprocess.py
+
+# Train model
+python train.py
+
+# Evaluate model
+python evaluate.py
+```
+
+## 📦 Installation
+
+### Method 1: pip (Recommended)
+```bash
+pip install -r requirements.txt
+```
+
+### Method 2: Docker
+```bash
+# Build image
+docker build -t can-lss-mamba .
+
+# Run with docker-compose
+docker-compose up train
+```
+
+### Method 3: Conda
+```bash
+conda create -n can-mamba python=3.11
+conda activate can-mamba
+pip install -r requirements.txt
+```
+
+## ⚙️ Configuration
+
+### Using Configuration Files
+
+The project uses YAML configuration files for different environments:
+
+- `configs/default.yaml` - Base configuration
+- `configs/vastai.yaml` - vast.ai specific (uses `/workspace` paths)
+- `configs/codespaces.yaml` - Codespaces specific (uses relative paths)
+
+**Select a config:**
+```bash
+CONFIG_PATH=configs/vastai.yaml python train.py
+```
+
+### Configuration Structure
+
+```yaml
+data:
+  root: /workspace/data
+  raw: ${data.root}/can-train-and-test-v1.5/set_01
+  processed: ${data.root}/processed_data/set_01_run_02
+
+model:
+  checkpoints_dir: /workspace/checkpoints/set_01
+  name: lss_can_mamba
+
+training:
+  batch_size: 32
+  epochs: 20
+  learning_rate: 0.0001
+  early_stop_patience: 10
+
+wandb:
+  enabled: true
+  project: can-lss-mamba
+```
+
+### Environment Variables Override
+
+Environment variables take precedence over config files:
+
+```bash
+BATCH_SIZE=64 EPOCHS=50 python train.py
+```
+
+## 🎮 Usage
+
+### Preprocessing
+```bash
+# Using default config
+python preprocessing/CAN_preprocess.py
+
+# Using custom config
+CONFIG_PATH=configs/vastai.yaml python scripts/preprocess.py
+
+# With environment overrides
+WINDOW_SIZE=128 STRIDE=64 python scripts/preprocess.py
+```
+
+### Training
+```bash
+# Basic training
+python train.py
+
+# With WandB tracking
+WANDB_ENABLED=true WANDB_API_KEY=your_key python train.py
+
+# Custom hyperparameters
+BATCH_SIZE=64 EPOCHS=50 LR=0.001 python train.py
+
+# Using wrapper script with config
+python scripts/train.py
+```
+
+### Evaluation
+```bash
+# Evaluate on test sets
+python evaluate.py
+
+# Using wrapper script
+python scripts/evaluate.py
+```
+
+### Jupyter Notebook
+```bash
+# Start Jupyter Lab
+jupyter lab
+
+# Open notebooks/vastai_workflow.ipynb
+```
+
+## 📁 Project Structure
+
+```
+can-lss-mamba/
+├── configs/                    # Configuration files
+│   ├── default.yaml           # Base config
+│   ├── vastai.yaml            # vast.ai config
+│   └── codespaces.yaml        # Codespaces config
+│
+├── src/                       # Source code (modular)
+│   ├── data/                  # Data processing
+│   │   └── preprocessing.py
+│   ├── models/                # Model definitions
+│   │   └── lss_mamba.py
+│   ├── training/              # Training utilities
+│   │   └── wandb_logger.py
+│   └── config.py              # Config loader
+│
+├── scripts/                   # Wrapper scripts (use configs)
+│   ├── preprocess.py
+│   ├── train.py
+│   └── evaluate.py
+│
+├── notebooks/                 # Jupyter notebooks
+│   └── vastai_workflow.ipynb
+│
+├── preprocessing/             # Original preprocessing (backwards compat)
+│   └── CAN_preprocess.py
+│
+├── tests/                     # Tests
+│   └── test_setup.py
+│
+├── train.py                   # Training script (original, with WandB)
+├── evaluate.py                # Evaluation script (original)
+├── model.py                   # Model definition (original)
+├── requirements.txt           # Python dependencies
+├── setup.sh                   # Auto-setup script
+├── Dockerfile                 # Docker image definition
+├── docker-compose.yml         # Docker services
+├── .env.example              # Environment variables template
+├── .gitignore                # Git ignore rules
+└── README.md                 # This file
+```
+
+## 🔧 Troubleshooting
+
+### GPU Not Detected
+```bash
+# Check CUDA availability
+python -c "import torch; print(torch.cuda.is_available())"
+
+# Verify NVIDIA driver
+nvidia-smi
+```
+
+### Import Errors
+```bash
+# Reinstall dependencies
+pip install -r requirements.txt --force-reinstall
+
+# Check Python version
+python --version  # Should be 3.11+
+```
+
+### WandB Login Issues
+```bash
+# Login to WandB
+wandb login
+
+# Or set API key
+export WANDB_API_KEY=your_key_here
+```
+
+### Out of Memory (OOM)
+```bash
+# Reduce batch size
+BATCH_SIZE=16 python train.py
+
+# Enable gradient checkpointing (if implemented)
+GRADIENT_CHECKPOINTING=true python train.py
+```
+
+### Directory Not Found
+```bash
+# Re-run setup
+bash setup.sh
+
+# Manually create directories
+mkdir -p data checkpoints results
+```
+
+## 🧪 Testing
+
+```bash
+# Run setup tests
+python tests/test_setup.py
+
+# Run with pytest (if installed)
+pytest tests/
+```
+
+## 📊 Experiment Tracking with WandB
+
+### Setup
+```bash
+# Install WandB
+pip install wandb
+
+# Login
+wandb login
+
+# Or set API key
+export WANDB_API_KEY=your_key_here
+```
+
+### Enable Tracking
+```bash
+# Method 1: Environment variable
+WANDB_ENABLED=true python train.py
+
+# Method 2: Config file
+# Edit configs/vastai.yaml:
+# wandb:
+#   enabled: true
+```
+
+### View Results
+Visit: https://wandb.ai/YOUR_USERNAME/can-lss-mamba
+
+## 🐳 Docker Usage
+
+### Build Image
+```bash
+docker build -t can-lss-mamba .
+```
+
+### Run Services
+```bash
+# Preprocessing
+docker-compose run preprocess
+
+# Training
+docker-compose run train
+
+# Evaluation
+docker-compose run evaluate
+
+# Jupyter notebook
+docker-compose up jupyter
+# Open http://localhost:8888
+```
+
+## 🤝 Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Mamba-SSM: https://github.com/state-spaces/mamba
+- CAN Dataset: [Source]
+- Weights & Biases: https://wandb.ai
+
+## 📧 Contact
+
+- GitHub: [@jhoshcinco](https://github.com/jhoshcinco)
+- Project Link: https://github.com/jhoshcinco/can-lss-mamba
+
+---
+
+**⭐ If you find this project helpful, please consider giving it a star!**

@@ -1,0 +1,24 @@
+# Configuration for GitHub Codespaces environment
+# Inherits from default.yaml with Codespaces-specific overrides
+
+defaults:
+  - default
+
+# Use relative paths for Codespaces
+data:
+  root: ./data
+  raw: ${data.root}/can-train-and-test-v1.5/set_01
+  processed: ${data.root}/processed_data/set_01_run_02
+
+model:
+  checkpoints_dir: ./checkpoints/set_01
+
+# Results directory
+results:
+  root: ./results
+
+# Disable WandB by default for Codespaces (can be enabled via env var)
+wandb:
+  enabled: false
+  project: can-lss-mamba
+  tags: ["codespaces"]
