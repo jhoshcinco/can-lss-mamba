@@ -1,0 +1,24 @@
+# Configuration for vast.ai environment
+# Inherits from default.yaml and overrides paths for vast.ai
+
+defaults:
+  - default
+
+# Override paths for vast.ai (uses /workspace)
+data:
+  root: /workspace/data
+  raw: ${data.root}/can-train-and-test-v1.5/set_01
+  processed: ${data.root}/processed_data/set_01_run_02
+
+model:
+  checkpoints_dir: /workspace/checkpoints/set_01
+
+# Results directory (vast.ai specific)
+results:
+  root: /workspace/results
+
+# Enable WandB for vast.ai training
+wandb:
+  enabled: true
+  project: can-lss-mamba
+  tags: ["vastai"]

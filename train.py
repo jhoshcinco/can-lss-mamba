@@ -8,6 +8,28 @@ import time
 import os
 from model import LSS_CAN_Mamba  # DO NOT CHANGE MODEL
 
+# Optional WandB integration (initialized by scripts/train.py if available)
+wandb_logger = None
+try:
+    if os.getenv("_WANDB_LOGGER_INITIALIZED"):
+        # Logger was initialized by wrapper script
+        pass
+    elif os.getenv("WANDB_ENABLED", "false").lower() == "true":
+        # Direct WandB initialization
+        import wandb
+        wandb.init(
+            project=os.getenv("WANDB_PROJECT", "can-lss-mamba"),
+            config={
+                "batch_size": int(os.environ.get("BATCH_SIZE", 32)),
+                "epochs": int(os.environ.get("EPOCHS", 20)),
+                "learning_rate": float(os.environ.get("LR", 1e-4)),
+            }
+        )
+        wandb_logger = wandb
+        print("✅ WandB initialized")
+except ImportError:
+    pass  # WandB not installed, continue without it
+
 # =========================
 # --- CONFIG (Colab/Drive + Resume Friendly) ---
 # You can override these via environment variables when running:
@@ -263,6 +285,26 @@ for epoch in range(start_epoch, EPOCHS):
         f"Thr: {best_t:.2f} | "
         f"Time: {time.time() - start:.1f}s"
     )
+    
+    # Log to WandB if enabled
+    if wandb_logger:
+        try:
+            log_dict = {
+                "epoch": epoch + 1,
+                "train/loss": train_loss / len(train_loader),
+                "train/lr": optimizer.param_groups[0]['lr'],
+                "val/f1": val_f1,
+                "val/accuracy": val_acc,
+                "val/threshold": best_t,
+                "val/separation": p_attacks.mean() - p_normal.mean(),
+            }
+            # Try with step parameter first, fall back to without if needed
+            if hasattr(wandb_logger, 'log'):
+                wandb_logger.log(log_dict, step=epoch + 1)
+            else:
+                wandb_logger.log(log_dict)
+        except Exception as e:
+            pass  # Silently fail WandB logging
 
     # === WARNING: Detect suspicious threshold behavior ===
     # Calculate expected threshold range based on attack rate (Bayes optimal)
@@ -297,6 +339,13 @@ for epoch in range(start_epoch, EPOCHS):
         epochs_without_improvement = 0  # Reset counter
         torch.save(model.state_dict(), MODEL_PATH)
         print(f">>> Best model saved! (F1={best_f1:.4f}, Threshold={best_threshold:.4f})")
+        
+        # Save best model to WandB
+        if wandb_logger:
+            try:
+                wandb_logger.save(MODEL_PATH)
+            except Exception:
+                pass  # Silently fail WandB save
     else:
         epochs_without_improvement += 1
         if epochs_without_improvement >= EARLY_STOP_PATIENCE:
