@@ -18,6 +18,7 @@ A deep learning model for Controller Area Network (CAN) bus intrusion detection 
 - [Advanced Features](docs/README.md#advanced-features)
   - [Cross-Dataset Evaluation](docs/CROSS_DATASET_IMPLEMENTATION_SUMMARY.md)
   - [Hyperparameter Tuning](docs/hyperparameter_tuning.md)
+  - [Baseline Comparisons](docs/baseline_comparisons.md)
   - [Combined Training](docs/combined_training.md)
 - [Complete Research Workflow](docs/complete_workflow.md)
 - [Project Structure](docs/project_structure.md)
