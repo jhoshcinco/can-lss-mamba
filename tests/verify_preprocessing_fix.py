@@ -33,7 +33,7 @@ if remaining:
     for i, line in enumerate(lines):
         if 'def safe_hex_to_int' in line:
             in_safe_hex_function = True
-        elif in_safe_hex_function and line.strip() and not line[0].isspace():
+        elif in_safe_hex_function and line.strip() and not line.startswith(' ') and not line.startswith('\t'):
             # We've left the function
             in_safe_hex_function = False
         
@@ -129,7 +129,7 @@ for i, line in enumerate(lines):
         in_split_payload = True
         split_payload_start = i
     elif in_split_payload:
-        if line.strip() and not line[0].isspace():
+        if line.strip() and not line.startswith(' ') and not line.startswith('\t'):
             # Left the function
             break
         if 'safe_hex_to_int' in line:
