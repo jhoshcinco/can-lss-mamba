@@ -237,6 +237,33 @@ def generate_comparison(dataset, data_dir, checkpoint_dir, batch_size=128, outpu
     # Results storage
     results = []
     
+   models_to_compare = {
+        'LSS-CAN-Mamba': {
+            # CHANGED: Pointing to 'balanced_model/best_model.pth'
+            'checkpoint': os.path.join(checkpoint_dir, 'balanced_model', 'best_model.pth'), 
+            'model_class': 'main',
+        },
+        'MLP': {
+            'checkpoint': os.path.join(checkpoint_dir, 'baselines', dataset, 'mlp', 'baseline_mlp_best.pth'),
+            'model_class': 'mlp',
+        },
+        'LSTM': {
+            'checkpoint': os.path.join(checkpoint_dir, 'baselines', dataset, 'lstm', 'baseline_lstm_best.pth'),
+            'model_class': 'lstm',
+        },
+        'CNN': {
+            'checkpoint': os.path.join(checkpoint_dir, 'baselines', dataset, 'cnn', 'baseline_cnn_best.pth'),
+            'model_class': 'cnn',
+        },
+        'GRU': {
+            'checkpoint': os.path.join(checkpoint_dir, 'baselines', dataset, 'gru', 'baseline_gru_best.pth'),
+            'model_class': 'gru',
+        },
+    }
+    
+    # Results storage
+    results = []
+    
     # Evaluate each model
     for model_name, config in models_to_compare.items():
         checkpoint_path = config['checkpoint']
@@ -267,8 +294,24 @@ def generate_comparison(dataset, data_dir, checkpoint_dir, batch_size=128, outpu
                     seq_len=data['seq_len']
                 ).to(device)
             
-            # Load weights
-            model.load_state_dict(checkpoint['model'])
+            # 2. FIX: Robust Weight Loading (Fixes KeyError: 'model')
+            # This handles different checkpoint formats automatically
+            if 'model' in checkpoint:
+                state_dict = checkpoint['model']
+            elif 'model_state_dict' in checkpoint:
+                state_dict = checkpoint['model_state_dict']
+            else:
+                state_dict = checkpoint  # Assume file is just weights
+                
+            # Handle 'module.' prefix if trained on multi-GPU
+            new_state_dict = {}
+            for k, v in state_dict.items():
+                if k.startswith('module.'):
+                    new_state_dict[k[7:]] = v
+                else:
+                    new_state_dict[k] = v
+                    
+            model.load_state_dict(new_state_dict)
             
             # Get best threshold from checkpoint
             best_threshold = checkpoint.get('best_threshold', 0.5)
