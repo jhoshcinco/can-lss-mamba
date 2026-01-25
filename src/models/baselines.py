@@ -177,55 +177,31 @@ class SimpleCNNBaseline(nn.Module):
 
 
 class SimpleGRUBaseline(nn.Module):
-    """
-    Simple GRU baseline.
-    
-    Similar to LSTM but uses GRU cells which are simpler and faster.
-    """
-    
-    def __init__(self, num_unique_ids, num_continuous_feats=9, d_model=256, num_layers=2):
+    # FIXED: Added seq_len (to ignore it) and num_layers (to define it)
+    def __init__(self, num_unique_ids, num_continuous_feats, d_model, seq_len=None, num_layers=2, **kwargs):
         super().__init__()
         
-        self.emb_dim = 32
-        self.id_embedding = nn.Embedding(num_unique_ids, self.emb_dim)
-        
-        # Input dimension: emb_dim + num_continuous_feats
-        input_dim = self.emb_dim + num_continuous_feats
+        self.embedding = nn.Embedding(num_unique_ids, d_model - num_continuous_feats)
+        self.cont_proj = nn.Linear(num_continuous_feats, num_continuous_feats)
         
         self.gru = nn.GRU(
-            input_dim,
-            d_model // 2,  # Hidden size (bidirectional will double this)
-            num_layers=num_layers,
+            input_size=d_model,
+            hidden_size=d_model,
+            num_layers=num_layers,  # Now this variable is defined
             batch_first=True,
-            bidirectional=True,
-            dropout=0.3 if num_layers > 1 else 0
+            dropout=0.1 if num_layers > 1 else 0
         )
         
-        self.classifier = nn.Sequential(
-            nn.Linear(d_model, d_model // 2),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(d_model // 2, 2)
-        )
-    
-    def forward(self, x_ids, x_feats):
-        # x_ids: [Batch, Seq_Len]
-        # x_feats: [Batch, Seq_Len, 9]
+        self.classifier = nn.Linear(d_model, 2)
+
+    def forward(self, ids, feats):
+        x_emb = self.embedding(ids)
+        x_cont = self.cont_proj(feats)
+        x = torch.cat([x_emb, x_cont], dim=-1)
         
-        # Embed IDs
-        x_emb = self.id_embedding(x_ids)  # [Batch, Seq_Len, emb_dim]
-        
-        # Concatenate embeddings and features
-        x = torch.cat([x_emb, x_feats], dim=-1)  # [Batch, Seq_Len, emb_dim + 9]
-        
-        # GRU processing
-        gru_out, h_n = self.gru(x)  # gru_out: [Batch, Seq_Len, d_model]
-        
-        # Use mean pooling over sequence
-        x = gru_out.mean(dim=1)  # [Batch, d_model]
-        
-        # Classification
-        logits = self.classifier(x)
+        output, _ = self.gru(x)
+        last_output = output[:, -1, :]
+        return self.classifier(last_output)
         
         return logits
 
