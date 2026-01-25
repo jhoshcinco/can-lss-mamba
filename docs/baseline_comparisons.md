@@ -124,7 +124,24 @@ If you have already trained models and just want to generate the comparison:
 python scripts/generate_baseline_comparisons.py --dataset set_01 --skip-training
 ```
 
-## Customizing Training
+### Customizing Training
+
+### Environment Variables
+
+You can customize the default paths using environment variables:
+
+```bash
+# Set custom data and checkpoint directories
+export DATA_ROOT=/path/to/data
+export CHECKPOINT_ROOT=/path/to/checkpoints
+
+# Then run the script
+python scripts/generate_baseline_comparisons.py --dataset set_01
+```
+
+**Default paths**:
+- `DATA_ROOT`: `/workspace/data/processed_data`
+- `CHECKPOINT_ROOT`: `/workspace/checkpoints`
 
 ### Hyperparameters
 

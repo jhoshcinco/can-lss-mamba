@@ -93,7 +93,8 @@ def evaluate_model(model, data_loader, device, threshold=0.5):
     
     try:
         auc = roc_auc_score(all_labels, all_probs)
-    except:
+    except ValueError:
+        # Not enough classes or samples for AUC calculation
         auc = 0.0
     
     # Confusion matrix
@@ -464,9 +465,12 @@ def main():
     
     all_results = []
     
+    # Get base directories from environment or use defaults
+    data_root = os.getenv('DATA_ROOT', '/workspace/data/processed_data')
+    checkpoint_root = os.getenv('CHECKPOINT_ROOT', '/workspace/checkpoints')
+    
     for dataset in datasets:
-        data_dir = f"/workspace/data/processed_data/{dataset}"
-        checkpoint_dir = "/workspace/checkpoints"
+        data_dir = os.path.join(data_root, dataset)
         
         # Check if data exists
         if not os.path.exists(data_dir):
@@ -476,7 +480,7 @@ def main():
         # Train models if not skipping
         if not args.skip_training:
             # Train main model
-            main_out_dir = os.path.join(checkpoint_dir, 'main')
+            main_out_dir = os.path.join(checkpoint_root, 'main')
             train_main_model(data_dir, main_out_dir, args.batch_size, args.lr, args.epochs)
             
             # Train baselines
@@ -497,7 +501,7 @@ def main():
         df = generate_comparison(
             dataset=dataset,
             data_dir=data_dir,
-            checkpoint_dir=checkpoint_dir,
+            checkpoint_dir=checkpoint_root,
             batch_size=args.eval_batch_size,
             output_file=output_file,
             skip_training=args.skip_training

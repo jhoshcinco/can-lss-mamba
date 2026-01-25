@@ -270,7 +270,8 @@ def train_baseline(
         # Calculate AUC
         try:
             val_auc = roc_auc_score(val_labels, val_probs)
-        except:
+        except ValueError:
+            # Not enough classes or samples
             val_auc = 0.0
         
         # Calculate separation metric
@@ -438,8 +439,12 @@ def main():
     # Train all combinations
     results = []
     
+    # Get base directories from environment or use defaults
+    data_root = os.getenv('DATA_ROOT', '/workspace/data/processed_data')
+    checkpoint_root = os.getenv('CHECKPOINT_ROOT', '/workspace/checkpoints')
+    
     for dataset in datasets:
-        data_dir = f"/workspace/data/processed_data/{dataset}"
+        data_dir = os.path.join(data_root, dataset)
         
         # Check if data exists
         if not os.path.exists(data_dir):
@@ -447,7 +452,7 @@ def main():
             continue
         
         for model_name in models:
-            out_dir = f"/workspace/checkpoints/baselines/{dataset}/{model_name}"
+            out_dir = os.path.join(checkpoint_root, 'baselines', dataset, model_name)
             
             result = train_baseline(
                 model_name=model_name,
