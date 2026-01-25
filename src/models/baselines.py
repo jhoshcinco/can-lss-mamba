@@ -63,8 +63,7 @@ class SimpleLSTMBaseline(nn.Module):
     Processes the sequence with a bidirectional LSTM and classifies
     based on the final hidden state.
     """
-    
-    def __init__(self, num_unique_ids, num_continuous_feats=9, d_model=256, num_layers=2):
+    def __init__(self, num_unique_ids, num_continuous_feats, d_model, seq_len=None, **kwargs):
         super().__init__()
         
         self.emb_dim = 32
@@ -119,7 +118,7 @@ class SimpleCNNBaseline(nn.Module):
     based on global average pooling.
     """
     
-    def __init__(self, num_unique_ids, num_continuous_feats=9, d_model=256):
+    def __init__(self, num_unique_ids, num_continuous_feats, d_model, seq_len=None, **kwargs):
         super().__init__()
         
         self.emb_dim = 32
