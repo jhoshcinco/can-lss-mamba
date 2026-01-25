@@ -28,6 +28,13 @@ def parse_args():
                         help='Path to raw dataset directory')
     parser.add_argument('--output-dir', type=str, default=None,
                         help='Path to save processed data')
+    parser.add_argument('--treat-na-as', 
+                        choices=['special_token', 'zero', 'skip'],
+                        default='special_token',
+                        help='How to handle "na" values: '
+                             'special_token (preserve as -1, recommended for attacks), '
+                             'zero (replace with 0, loses attack information), '
+                             'skip (remove rows with na)')
     return parser.parse_args()
 
 
@@ -71,6 +78,34 @@ print(f"{'='*60}\n")
 
 # --- HELPER FUNCTIONS ---
 
+class NAStatistics:
+    """Track statistics about 'na' values in the dataset."""
+    def __init__(self):
+        self.total_rows = 0
+        self.na_in_can_id = 0
+        self.na_in_dlc = 0
+        self.na_in_data_bytes = 0
+        self.rows_with_any_na = 0
+        self.skipped_rows = 0
+        
+    def log_statistics(self, filename, logger):
+        """Log statistics for a specific file."""
+        if self.rows_with_any_na > 0:
+            logger.info(f"NA Statistics for {filename}:")
+            logger.info(f"  Total rows: {self.total_rows}")
+            if self.na_in_can_id > 0:
+                pct = (self.na_in_can_id / self.total_rows * 100) if self.total_rows > 0 else 0
+                logger.info(f"  'na' in CAN ID: {self.na_in_can_id} ({pct:.2f}%)")
+            if self.na_in_dlc > 0:
+                pct = (self.na_in_dlc / self.total_rows * 100) if self.total_rows > 0 else 0
+                logger.info(f"  'na' in DLC: {self.na_in_dlc} ({pct:.2f}%)")
+            if self.na_in_data_bytes > 0:
+                logger.info(f"  'na' in data bytes: {self.na_in_data_bytes} rows")
+            logger.info(f"  Rows with any 'na': {self.rows_with_any_na}")
+            if self.skipped_rows > 0:
+                logger.info(f"  Skipped rows: {self.skipped_rows}")
+
+
 def is_na_value(value):
     """
     Check if a value is considered 'na' or invalid.
@@ -88,29 +123,41 @@ def is_na_value(value):
     return False
 
 
-def safe_hex_to_int(value, default=0):
+def safe_hex_to_int(value, default=0, allow_na_token=False):
     """
-    Safely convert hex string to integer, handling invalid values.
+    Safely convert hex string to integer with 'na' handling.
     
     Args:
         value: String value to convert (e.g., '0x123', '123', 'na')
         default: Default value if conversion fails
-        
+        allow_na_token: If True, 'na' returns -1 (special token for attack signature)
+                       If False, 'na' returns default
+    
     Returns:
-        Integer value or default
+        Integer value, -1 for 'na' (if allow_na_token=True), or default for other errors
     """
-    if is_na_value(value):
+    # Check for pandas NaN or None
+    if pd.isna(value):
+        if allow_na_token:
+            return -1
         return default
     
+    # Convert to string and normalize
+    value_str = str(value).strip().lower()
+    
+    # Handle 'na' as special token (ATTACK SIGNATURE)
+    if value_str in ['na', 'nan', 'none', '']:
+        if allow_na_token:
+            return -1  # Special token meaning "malformed/missing"
+        else:
+            return default
+    
+    # Try to convert hex string
     try:
-        # Handle both '0x123' and '123' formats
-        if isinstance(value, str):
-            value = value.strip().lower()
-            if value.startswith('0x'):
-                return int(value, 16)
-            else:
-                return int(value, 16)
-        return int(value)
+        if value_str.startswith('0x'):
+            return int(value_str, 16)
+        else:
+            return int(value_str, 16)
     except (ValueError, TypeError):
         return default
 
@@ -134,12 +181,13 @@ def safe_float(value, default=0.0):
         return default
 
 
-def split_payload(hex_str):
+def split_payload(hex_str, allow_na_token=False):
     """
     Split hex payload string into 8 bytes.
     
     Args:
         hex_str: Hexadecimal payload string (e.g., '0011223344556677')
+        allow_na_token: If True, 'na' bytes become -1, else 0
         
     Returns:
         List of 8 integers representing bytes
@@ -148,7 +196,8 @@ def split_payload(hex_str):
     
     # Handle 'na' values
     if hex_str in ['na', 'nan', '']:
-        return [0] * 8  # Return default values
+        default_val = -1 if allow_na_token else 0
+        return [default_val] * 8  # Return special token or default values
     
     # Ensure it is exactly 16 chars (8 bytes); pad with zeros if shorter
     hex_str = hex_str.ljust(16, '0')
@@ -156,7 +205,7 @@ def split_payload(hex_str):
     # Split into 8 integers with safe conversion
     result = []
     for i in range(0, 16, 2):
-        byte_val = safe_hex_to_int(hex_str[i:i + 2], default=0)
+        byte_val = safe_hex_to_int(hex_str[i:i + 2], default=0, allow_na_token=allow_na_token)
         result.append(byte_val)
     return result
 
@@ -185,26 +234,29 @@ def validate_dataframe(df, filename):
     return True
 
 
-def parse_csv(file_path, id_map=None, skip_invalid_rows=False):
+def parse_csv(file_path, id_map=None, skip_invalid_rows=False, treat_na_as='special_token'):
     """
     Parses CSV, extracts IDs, Payloads, and Time Deltas.
-    Returns: ids, payloads, delta_feat, labels
+    
+    Args:
+        file_path: Path to CSV file
+        id_map: Dictionary mapping CAN IDs to indices (if None, returns unique IDs)
+        skip_invalid_rows: Whether to skip rows with invalid data
+        treat_na_as: How to handle 'na' values ('special_token', 'zero', 'skip')
+        
+    Returns: ids, payloads, delta_feat, labels (or unique_ids if id_map is None)
     """
+    # Determine na handling mode
+    allow_na_token = (treat_na_as == 'special_token')
+    skip_na_rows = (treat_na_as == 'skip') or skip_invalid_rows
+    
     # Initialize statistics
-    stats = {
-        'total_rows': 0,
-        'invalid_can_id': 0,
-        'invalid_timestamp': 0,
-        'invalid_data_bytes': 0,
-        'rows_with_na': 0,
-        'valid_rows': 0,
-        'skipped_rows': 0
-    }
+    stats = NAStatistics()
     
     try:
         # 1. Read Data
         df = pd.read_csv(file_path)
-        stats['total_rows'] = len(df)
+        stats.total_rows = len(df)
 
         # Standardize headers (strip spaces, lowercase) just in case
         df.columns = df.columns.str.strip().str.lower()
@@ -223,7 +275,6 @@ def parse_csv(file_path, id_map=None, skip_invalid_rows=False):
         # 2. Process Time Delta (CRITICAL FOR MAMBA)
         # Convert timestamp to float with safe conversion
         df[time_col] = df[time_col].apply(lambda x: safe_float(x, default=0.0))
-        stats['invalid_timestamp'] = (df[time_col] == 0.0).sum()
 
         # Calculate Delta (Time since last message)
         delta = df[time_col].diff().fillna(0).values
@@ -241,42 +292,51 @@ def parse_csv(file_path, id_map=None, skip_invalid_rows=False):
             if isinstance(x, str):
                 # Check if it's a hex string (contains letters)
                 if any(c.isalpha() for c in str(x).lower().replace('x', '')):
-                    return safe_hex_to_int(x, default=0)
+                    return safe_hex_to_int(x, default=0, allow_na_token=allow_na_token)
                 else:
                     # Try to parse as integer
                     try:
                         return int(x)
                     except (ValueError, TypeError):
-                        return safe_hex_to_int(x, default=0)
+                        return safe_hex_to_int(x, default=0, allow_na_token=allow_na_token)
             else:
                 try:
                     return int(x)
                 except (ValueError, TypeError):
+                    if allow_na_token:
+                        return -1
                     return 0
         
         df[id_col] = df[id_col].apply(safe_parse_id)
-        stats['invalid_can_id'] = (df[id_col] == 0).sum()
+        
+        # Track na statistics for CAN IDs
+        stats.na_in_can_id = (df[id_col] == -1).sum()
 
         if id_map:
             # Map IDs to learned indices (Training Phase)
-            df['id_idx'] = df[id_col].apply(lambda x: id_map.get(x, id_map.get('<UNK>')))
+            # Use id_map['<UNK>'] for unknown IDs (no hardcoded fallback)
+            unk_idx = id_map.get('<UNK>', 0)
+            df['id_idx'] = df[id_col].apply(lambda x: id_map.get(x, unk_idx))
         else:
-            # Return unique IDs for Vocabulary Building (filter out 0s if they're invalid)
+            # Return unique IDs for Vocabulary Building
             unique_ids = df[id_col].unique()
-            # Optionally filter out invalid IDs (0) if skip_invalid_rows is True
-            if skip_invalid_rows:
-                unique_ids = unique_ids[unique_ids != 0]
+            # Don't filter out -1 (na token) - it's a valid special token
+            if skip_na_rows:
+                # Only filter if explicitly requested
+                unique_ids = unique_ids[unique_ids != -1]
             return unique_ids
 
         # 4. Process Payload (Split Hex String -> 8 Bytes)
-        payload_list = df[data_col].apply(split_payload).tolist()
+        payload_list = df[data_col].apply(lambda x: split_payload(x, allow_na_token=allow_na_token)).tolist()
         
-        # Count invalid data bytes
+        # Count rows with na in data bytes
         for payload in payload_list:
-            if payload == [0] * 8:
-                stats['invalid_data_bytes'] += 1
+            if -1 in payload:
+                stats.na_in_data_bytes += 1
         
         payloads = np.array(payload_list) / 255.0  # Normalize bytes to [0, 1]
+        # Note: -1 becomes -1/255.0 (~-0.004) for special tokens
+        # This is intentional - the small negative value is distinguishable from normal [0,1] range
 
         # 5. Process Labels
         # Ensure labels are integers (0 or 1)
@@ -284,45 +344,39 @@ def parse_csv(file_path, id_map=None, skip_invalid_rows=False):
         labels = df[label_col].apply(lambda x: 1 if str(x).upper() in ['1', 'T', 'ATTACK'] else 0).values
 
         # 6. Calculate statistics
-        # Count unique rows with at least one invalid field
-        has_invalid_id = (df[id_col] == 0)
-        has_invalid_time = (df[time_col] == 0.0)
-        # Note: Invalid data bytes are tracked globally, not per-row due to implementation constraints
-        stats['rows_with_na'] = (has_invalid_id | has_invalid_time).sum()
-        stats['valid_rows'] = stats['total_rows'] - stats['rows_with_na']
+        # Count unique rows with at least one 'na' field
+        has_na_id = (df[id_col] == -1)
+        has_na_time = (df[time_col] == 0.0)
         
-        # 7. Filter out invalid rows if requested
-        if skip_invalid_rows:
-            valid_mask = (df[id_col] != 0) & (df[time_col] != 0.0)
+        # Check for na in data bytes (per row)
+        has_na_data = np.array([any(b == -1 for b in payload) for payload in payload_list])
+        
+        # Combine all na indicators
+        stats.rows_with_any_na = (has_na_id | has_na_time | has_na_data).sum()
+        
+        # 7. Filter out rows with 'na' if requested
+        if skip_na_rows:
+            # Build filter mask - skip rows with -1 in critical fields
+            valid_mask = (df[id_col] != -1) & (df[time_col] != 0.0)
             if not valid_mask.all():
+                initial_len = len(df)
                 df = df[valid_mask].reset_index(drop=True)
-                stats['skipped_rows'] = stats['total_rows'] - len(df)
-                logger.info(f"Skipped {stats['skipped_rows']} invalid rows from {filename}")
+                stats.skipped_rows = initial_len - len(df)
+                logger.info(f"Skipped {stats.skipped_rows} rows with 'na' from {filename}")
                 
                 # Recalculate features for valid rows only
                 delta = df[time_col].diff().fillna(0).values
                 delta_norm = np.log1p(delta + 1e-6)
                 delta_feat = delta_norm.reshape(-1, 1)
                 
-                df['id_idx'] = df[id_col].apply(lambda x: id_map.get(x, id_map.get('<UNK>')))
-                payload_list = df[data_col].apply(split_payload).tolist()
+                unk_idx = id_map.get('<UNK>', 0)
+                df['id_idx'] = df[id_col].apply(lambda x: id_map.get(x, unk_idx))
+                payload_list = df[data_col].apply(lambda x: split_payload(x, allow_na_token=allow_na_token)).tolist()
                 payloads = np.array(payload_list) / 255.0
                 labels = df[label_col].apply(lambda x: 1 if str(x).upper() in ['1', 'T', 'ATTACK'] else 0).values
         
         # 8. Log data quality report
-        if stats['rows_with_na'] > 0:
-            logger.info(f"Data quality report for {filename}:")
-            logger.info(f"  Total rows: {stats['total_rows']}")
-            logger.info(f"  Valid rows: {stats['valid_rows']}")
-            logger.info(f"  Rows with 'na' values: {stats['rows_with_na']}")
-            if stats['invalid_can_id'] > 0:
-                logger.info(f"  Invalid CAN IDs: {stats['invalid_can_id']}")
-            if stats['invalid_timestamp'] > 0:
-                logger.info(f"  Invalid timestamps: {stats['invalid_timestamp']}")
-            if stats['invalid_data_bytes'] > 0:
-                logger.info(f"  Invalid data bytes: {stats['invalid_data_bytes']}")
-            if stats['skipped_rows'] > 0:
-                logger.info(f"  Skipped rows: {stats['skipped_rows']}")
+        stats.log_statistics(filename, logger)
 
         return df['id_idx'].values, payloads, delta_feat, labels
 
@@ -363,7 +417,7 @@ def create_windows(ids, payloads, deltas, labels):
 
 # --- MAIN PIPELINE ---
 
-def run_pipeline(skip_invalid_rows=False, dataset=None, dataset_root=None, output_dir=None):
+def run_pipeline(skip_invalid_rows=False, dataset=None, dataset_root=None, output_dir=None, treat_na_as='special_token'):
     # Use provided parameters or fall back to globals
     dataset = dataset or DATASET
     dataset_root = dataset_root or DATASET_ROOT
@@ -378,7 +432,8 @@ def run_pipeline(skip_invalid_rows=False, dataset=None, dataset_root=None, outpu
         'total_rows': 0,
         'valid_rows': 0,
         'invalid_rows': 0,
-        'skipped_rows': 0
+        'skipped_rows': 0,
+        'treat_na_as': treat_na_as
     }
 
     # 1. IDENTIFY FILES
@@ -406,22 +461,43 @@ def run_pipeline(skip_invalid_rows=False, dataset=None, dataset_root=None, outpu
     val_files = all_files[split_idx:]
 
     logger.info(f"Found {len(all_files)} files. Train: {len(train_files)}, Val: {len(val_files)}")
+    logger.info(f"NA handling mode: {treat_na_as}")
 
     # 2. BUILD VOCABULARY (IDs)
     logger.info("Building ID Map...")
     unique_ids = set()
     for f in train_files:
         try:
-            current_ids = parse_csv(f, skip_invalid_rows=skip_invalid_rows)  # Returns unique IDs list
+            current_ids = parse_csv(f, skip_invalid_rows=skip_invalid_rows, treat_na_as=treat_na_as)  # Returns unique IDs list
             if current_ids is not None:
                 unique_ids.update(current_ids)
         except Exception as e:
             logger.warning(f"Skipping {f} during vocab build: {e}")
 
-    # Create Mapping
-    id_map = {can_id: i for i, can_id in enumerate(sorted(unique_ids))}
-    id_map['<UNK>'] = len(id_map)  # Handle unknown IDs
+    # Create Mapping with special token handling
+    # If treat_na_as='special_token', reserve index 0 for -1 (na token)
+    id_map = {}
+    if treat_na_as == 'special_token' and -1 in unique_ids:
+        # Reserve index 0 for 'na' token (-1)
+        id_map[-1] = 0
+        logger.info("Reserved vocab index 0 for 'na' token (-1)")
+        
+        # Map other IDs starting from index 1
+        idx = 1
+        for can_id in sorted(unique_ids):
+            if can_id != -1:  # Skip -1 as it's already mapped
+                id_map[can_id] = idx
+                idx += 1
+    else:
+        # Standard mapping (no special token)
+        id_map = {can_id: i for i, can_id in enumerate(sorted(unique_ids))}
+    
+    # Add unknown token
+    id_map['<UNK>'] = len(id_map)
+    
     logger.info(f"Vocab Size: {len(id_map)} IDs (saved to {output_dir}/id_map.npy)")
+    if -1 in id_map:
+        logger.info(f"'na' token (-1) mapped to vocab index: {id_map[-1]}")
 
     # Save ID Map
     np.save(os.path.join(output_dir, "id_map.npy"), id_map)
@@ -434,7 +510,7 @@ def run_pipeline(skip_invalid_rows=False, dataset=None, dataset_root=None, outpu
     X_tr_ids, X_tr_pay, X_tr_time, y_tr = [], [], [], []
 
     for f in train_files:
-        res = parse_csv(f, id_map, skip_invalid_rows=skip_invalid_rows)
+        res = parse_csv(f, id_map, skip_invalid_rows=skip_invalid_rows, treat_na_as=treat_na_as)
         if res:
             ids, pay, time, lbl = res
             w_ids, w_pay, w_time, w_lbl = create_windows(ids, pay, time, lbl)
@@ -461,7 +537,7 @@ def run_pipeline(skip_invalid_rows=False, dataset=None, dataset_root=None, outpu
     X_val_ids, X_val_pay, X_val_time, y_val = [], [], [], []
 
     for f in val_files:
-        res = parse_csv(f, id_map, skip_invalid_rows=skip_invalid_rows)
+        res = parse_csv(f, id_map, skip_invalid_rows=skip_invalid_rows, treat_na_as=treat_na_as)
         if res:
             ids, pay, time, lbl = res
             w_ids, w_pay, w_time, w_lbl = create_windows(ids, pay, time, lbl)
@@ -485,7 +561,8 @@ def run_pipeline(skip_invalid_rows=False, dataset=None, dataset_root=None, outpu
         'dataset': dataset,
         'total_files': overall_stats['total_files'],
         'preprocessing_completed': True,
-        'skip_invalid_rows': skip_invalid_rows
+        'skip_invalid_rows': skip_invalid_rows,
+        'treat_na_as': treat_na_as
     }
     
     quality_report_path = os.path.join(output_dir, 'data_quality_report.json')
@@ -512,19 +589,21 @@ if __name__ == "__main__":
         output_dir = f"/workspace/data/processed_data/{dataset}_run_02"
     
     # Print updated configuration if arguments were provided
-    if args.dataset or args.dataset_root or args.output_dir:
+    if args.dataset or args.dataset_root or args.output_dir or args.treat_na_as != 'special_token':
         print(f"\n{'='*60}")
         print(f"Updated Configuration (from command-line args)")
         print(f"{'='*60}")
         print(f"Dataset: {dataset}")
         print(f"Dataset Root: {dataset_root}")
         print(f"Output Dir: {output_dir}")
+        print(f"NA handling: {args.treat_na_as}")
         print(f"{'='*60}\n")
     
-    logger.info(f"Starting preprocessing with skip_invalid_rows={args.skip_invalid_rows}")
+    logger.info(f"Starting preprocessing with skip_invalid_rows={args.skip_invalid_rows}, treat_na_as={args.treat_na_as}")
     run_pipeline(
         skip_invalid_rows=args.skip_invalid_rows,
         dataset=dataset,
         dataset_root=dataset_root,
-        output_dir=output_dir
+        output_dir=output_dir,
+        treat_na_as=args.treat_na_as
     )

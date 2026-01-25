@@ -42,16 +42,24 @@ def test_functions_exist():
         'parse_args'
     ]
     
+    required_classes = [
+        'NAStatistics'
+    ]
+    
     missing = []
     for func in required_functions:
         if f"def {func}" not in content:
             missing.append(func)
     
+    for cls in required_classes:
+        if f"class {cls}" not in content:
+            missing.append(cls)
+    
     if missing:
-        print(f"❌ Missing functions: {', '.join(missing)}")
+        print(f"❌ Missing functions/classes: {', '.join(missing)}")
         return False
     else:
-        print(f"✅ All required functions found")
+        print(f"✅ All required functions and classes found")
         return True
 
 
@@ -121,7 +129,8 @@ def test_command_line_args():
         '--skip-invalid-rows',
         '--dataset',
         '--dataset-root',
-        '--output-dir'
+        '--output-dir',
+        '--treat-na-as'
     ]
     
     missing = []
@@ -177,12 +186,13 @@ def test_data_quality_features():
     
     # Check for data quality features
     features = [
-        ('stats = {', 'Statistics tracking'),
-        ("'invalid_can_id'", 'Invalid CAN ID tracking'),
-        ("'invalid_timestamp'", 'Invalid timestamp tracking'),
-        ("'invalid_data_bytes'", 'Invalid data bytes tracking'),
+        ('NAStatistics', 'NAStatistics class'),
+        ("na_in_can_id", 'NA in CAN ID tracking'),
+        ("na_in_dlc", 'NA in DLC tracking'),
+        ("na_in_data_bytes", 'NA in data bytes tracking'),
         ('data_quality_report.json', 'Data quality report generation'),
         ('validate_dataframe', 'DataFrame validation'),
+        ('log_statistics', 'Statistics logging method'),
     ]
     
     all_passed = True
