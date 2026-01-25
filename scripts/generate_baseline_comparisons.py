@@ -210,33 +210,6 @@ def generate_comparison(dataset, data_dir, checkpoint_dir, batch_size=128, outpu
     # Load data
     data = load_data(data_dir, batch_size=batch_size)
     
-    # Define models to compare
-    models_to_compare = {
-        'LSS-CAN-Mamba': {
-            'checkpoint': os.path.join(checkpoint_dir, 'main', 'lss_can_mamba_best.pth'),
-            'model_class': 'main',
-        },
-        'MLP': {
-            'checkpoint': os.path.join(checkpoint_dir, 'baselines', dataset, 'mlp', 'baseline_mlp_best.pth'),
-            'model_class': 'mlp',
-        },
-        'LSTM': {
-            'checkpoint': os.path.join(checkpoint_dir, 'baselines', dataset, 'lstm', 'baseline_lstm_best.pth'),
-            'model_class': 'lstm',
-        },
-        'CNN': {
-            'checkpoint': os.path.join(checkpoint_dir, 'baselines', dataset, 'cnn', 'baseline_cnn_best.pth'),
-            'model_class': 'cnn',
-        },
-        'GRU': {
-            'checkpoint': os.path.join(checkpoint_dir, 'baselines', dataset, 'gru', 'baseline_gru_best.pth'),
-            'model_class': 'gru',
-        },
-    }
-    
-    # Results storage
-    results = []
-    
    models_to_compare = {
         'LSS-CAN-Mamba': {
             # CHANGED: Pointing to 'balanced_model/best_model.pth'
