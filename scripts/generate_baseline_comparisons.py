@@ -476,6 +476,7 @@ def main():
     # Determine datasets
     if args.all:
         datasets = ['set_01', 'set_02', 'set_03', 'set_04']
+        #datasets = ['set_01']
     else:
         datasets = [args.dataset]
     
