@@ -63,8 +63,6 @@ class SimpleLSTMBaseline(nn.Module):
     Processes the sequence with a bidirectional LSTM and classifies
     based on the final hidden state.
     """
-    class SimpleLSTMBaseline(nn.Module):
-    # FIXED: Added 'num_layers=2' to the definition
     def __init__(self, num_unique_ids, num_continuous_feats, d_model, seq_len=None, num_layers=2, **kwargs):
         super().__init__()
         
