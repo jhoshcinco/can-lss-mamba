@@ -426,8 +426,8 @@ def main():
     
     # Determine datasets to train on
     if args.all:
-        #datasets = ['set_01', 'set_02', 'set_03', 'set_04']
-        datasets = ['set_01_run_02']
+        datasets = ['set_01', 'set_02', 'set_03', 'set_04']
+        #datasets = ['set_01_run_02']
     else:
         datasets = [args.dataset]
     
