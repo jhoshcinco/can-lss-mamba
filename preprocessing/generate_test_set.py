@@ -15,7 +15,7 @@ import glob
 import numpy as np
 import argparse
 import logging
-from preprocess_core import parse_csv, create_windows, get_config
+from CAN_preprocess import parse_csv, create_windows, get_config
 
 # --- LOGGING ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(TEST)s - %(message)s')
@@ -113,7 +113,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Merge multiple test folders into one test_data.npz')
     
     # Imports strictly for config defaults
-    from preprocess_core import WINDOW_SIZE, STRIDE, get_config
+    from CAN_preprocess import WINDOW_SIZE, STRIDE, get_config
     _, _, default_out, _, _ = get_config()
 
     parser.add_argument('--dataset-dir', type=str, required=True,
