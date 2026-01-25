@@ -33,9 +33,10 @@ if remaining:
     for i, line in enumerate(lines):
         if 'def safe_hex_to_int' in line:
             in_safe_hex_function = True
-        elif in_safe_hex_function and line.strip() and not line.startswith(' ') and not line.startswith('\t'):
-            # We've left the function
-            in_safe_hex_function = False
+        elif in_safe_hex_function:
+            # Check if we've reached a new function/class definition at column 0
+            if (line.startswith('def ') or line.startswith('class ')) and 'safe_hex_to_int' not in line:
+                in_safe_hex_function = False
         
         if 'int(' in line and ', 16)' in line:
             if not in_safe_hex_function:
@@ -129,8 +130,8 @@ for i, line in enumerate(lines):
         in_split_payload = True
         split_payload_start = i
     elif in_split_payload:
-        if line.strip() and not line.startswith(' ') and not line.startswith('\t'):
-            # Left the function
+        # Check if we've reached a new function/class definition at column 0
+        if (line.startswith('def ') or line.startswith('class ')) and 'split_payload' not in line:
             break
         if 'safe_hex_to_int' in line:
             uses_safe_hex = True
