@@ -314,7 +314,9 @@ def parse_csv(file_path, id_map=None, skip_invalid_rows=False, treat_na_as='spec
 
         if id_map:
             # Map IDs to learned indices (Training Phase)
-            df['id_idx'] = df[id_col].apply(lambda x: id_map.get(x, id_map.get('<UNK>', 0)))
+            # Use id_map['<UNK>'] for unknown IDs (no hardcoded fallback)
+            unk_idx = id_map.get('<UNK>', 0)
+            df['id_idx'] = df[id_col].apply(lambda x: id_map.get(x, unk_idx))
         else:
             # Return unique IDs for Vocabulary Building
             unique_ids = df[id_col].unique()
@@ -333,7 +335,8 @@ def parse_csv(file_path, id_map=None, skip_invalid_rows=False, treat_na_as='spec
                 stats.na_in_data_bytes += 1
         
         payloads = np.array(payload_list) / 255.0  # Normalize bytes to [0, 1]
-        # Note: -1 becomes -1/255.0 (~-0.004), which is still distinguishable
+        # Note: -1 becomes -1/255.0 (~-0.004) for special tokens
+        # This is intentional - the small negative value is distinguishable from normal [0,1] range
 
         # 5. Process Labels
         # Ensure labels are integers (0 or 1)
@@ -344,13 +347,12 @@ def parse_csv(file_path, id_map=None, skip_invalid_rows=False, treat_na_as='spec
         # Count unique rows with at least one 'na' field
         has_na_id = (df[id_col] == -1)
         has_na_time = (df[time_col] == 0.0)
-        stats.rows_with_any_na = (has_na_id | has_na_time).sum()
         
-        # If data bytes have -1, add to rows_with_any_na
-        for i, payload in enumerate(payload_list):
-            if -1 in payload and i < len(df):
-                stats.rows_with_any_na = max(stats.rows_with_any_na, (has_na_id | has_na_time).sum())
-                break
+        # Check for na in data bytes (per row)
+        has_na_data = np.array([any(b == -1 for b in payload) for payload in payload_list])
+        
+        # Combine all na indicators
+        stats.rows_with_any_na = (has_na_id | has_na_time | has_na_data).sum()
         
         # 7. Filter out rows with 'na' if requested
         if skip_na_rows:
@@ -367,7 +369,8 @@ def parse_csv(file_path, id_map=None, skip_invalid_rows=False, treat_na_as='spec
                 delta_norm = np.log1p(delta + 1e-6)
                 delta_feat = delta_norm.reshape(-1, 1)
                 
-                df['id_idx'] = df[id_col].apply(lambda x: id_map.get(x, id_map.get('<UNK>', 0)))
+                unk_idx = id_map.get('<UNK>', 0)
+                df['id_idx'] = df[id_col].apply(lambda x: id_map.get(x, unk_idx))
                 payload_list = df[data_col].apply(lambda x: split_payload(x, allow_na_token=allow_na_token)).tolist()
                 payloads = np.array(payload_list) / 255.0
                 labels = df[label_col].apply(lambda x: 1 if str(x).upper() in ['1', 'T', 'ATTACK'] else 0).values
