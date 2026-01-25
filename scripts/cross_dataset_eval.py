@@ -87,10 +87,11 @@ def train_model(dataset_name, config, batch_size=32, lr=0.0001, epochs=20,
     env['WANDB_NAME'] = f"cross_eval_train_{dataset_name}"
     
     # Run training
+    # Note: Using new package structure
     result = subprocess.run(
-        ['python', 'train.py'],
+        ['python3', '-m', 'can_lss_mamba.train'],
         env=env,
-        cwd=Path(__file__).parent.parent
+        cwd=Path(__file__).parent.parent / "src"
     )
     
     return result.returncode == 0
@@ -135,9 +136,9 @@ def evaluate_model(train_dataset, test_dataset, train_config, test_config):
     
     # Run evaluation
     result = subprocess.run(
-        ['python', 'evaluate.py'],
+        ['python3', '-m', 'can_lss_mamba.evaluate'],
         env=env,
-        cwd=Path(__file__).parent.parent,
+        cwd=Path(__file__).parent.parent / "src",
         capture_output=True,
         text=True
     )

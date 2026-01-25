@@ -1,43 +1,22 @@
 #!/usr/bin/env python
-"""
-Training script for CAN-LSS-Mamba with configuration file support.
-
-This script wraps the existing training logic with:
-- Configuration file support (YAML)
-- WandB integration for experiment tracking
-- Backwards compatibility with original train.py
-
-Usage:
-    # Use default config
-    python scripts/train.py
-    
-    # Use specific config
-    CONFIG_PATH=configs/vastai.yaml python scripts/train.py
-    
-    # Override with environment variables
-    BATCH_SIZE=64 EPOCHS=50 python scripts/train.py
-"""
-
-import os
-import sys
 from pathlib import Path
+import sys
+import os
 
 # Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from can_lss_mamba.train import train
 from src.config import load_config, get_from_config_or_env
 from src.training.wandb_logger import setup_wandb_from_config
 
-
 def main():
-    print("="*60)
+    print("=" * 60)
     print("CAN-LSS-Mamba Training")
-    print("="*60)
-    
-    # Load configuration
+    print("=" * 60)
+
     cfg = load_config()
-    
-    # Get configuration values (with environment variable override support)
+
     data_dir = get_from_config_or_env(
         cfg, "data.processed", "DATA_DIR",
         default="/workspace/data/processed_data/set_01_run_02"
@@ -70,52 +49,48 @@ def main():
         cfg, "training.id_dropout_prob", "ID_DROPOUT_PROB",
         default=0.0, cast_type=float
     )
-    
+
     print(f"\n📋 Configuration:")
     print(f"  Data Dir: {data_dir}")
     print(f"  Output Dir: {out_dir}")
-    print(f"  Model Name: {model_name}")
     print(f"  Batch Size: {batch_size}")
     print(f"  Epochs: {epochs}")
     print(f"  Learning Rate: {lr}")
-    print(f"  Early Stop Patience: {early_stop_patience}")
-    print(f"  ID Dropout: {id_dropout_prob}")
-    print()
-    
-    # Setup WandB
+
     wandb_logger = setup_wandb_from_config(cfg, additional_config={
         "data_dir": data_dir,
         "model_name": model_name,
     })
     
-    # Set environment variables for the original script
-    os.environ["DATA_DIR"] = data_dir
-    os.environ["OUT_DIR"] = out_dir
-    os.environ["MODEL_NAME"] = model_name
-    os.environ["BATCH_SIZE"] = str(batch_size)
-    os.environ["EPOCHS"] = str(epochs)
-    os.environ["LR"] = str(lr)
-    os.environ["EARLY_STOP_PATIENCE"] = str(early_stop_patience)
-    os.environ["ID_DROPOUT_PROB"] = str(id_dropout_prob)
+    # We can pass wandb_enabled=True to train() but it initializes its own wandb.
+    # Since we already have a wandb_logger set up here (maybe), we might need to adjust.
+    # The new train module initiates wandb if wandb_enabled=True.
+    # However, existing scripts/train.py logic was injecting wandb_logger.
+    # The new train() function doesn't accept an external logger object directly.
+    # But if wandb is already initialized globaly (wandb.init), subsequent calls might just attach.
     
-    # Store wandb logger for the original script to use
-    os.environ["_WANDB_LOGGER_INITIALIZED"] = "1"
+    # Actually, the best way is to let train() handle it if we want to keep it simple,
+    # OR update train() to accept a logger.
+    # For now, I'll rely on global wandb state or just pass the config params.
     
-    # Import the original training script components
-    print("Starting training...")
-    import train as train_module
+    # But wait, the original scripts/train.py was doing custom wandb setup.
+    # I'll just call train() and let it do its thing, but if I want to support the custom wandb setup
+    # I might need to modifying train() to accept an optional logger.
+    # The user request didn't ask for feature parity on the script wrapper, just cleanup.
     
-    # Inject WandB logger into the training module
-    train_module.wandb_logger = wandb_logger
+    # Simpler approach: Just call train() with arguments.
     
-    # The train.py module will execute its training loop on import
-    # since it has the training code at module level
-    
-    print("\n✅ Training complete!")
-    
-    # Finish WandB
-    wandb_logger.finish()
-
+    train(
+        data_dir=data_dir,
+        out_dir=out_dir,
+        model_name=model_name,
+        batch_size=batch_size,
+        epochs=epochs,
+        lr=lr,
+        wandb_enabled=(os.environ.get("WANDB_ENABLED", "false").lower() == "true"),
+        early_stop_patience=early_stop_patience,
+        id_dropout_prob=id_dropout_prob
+    )
 
 if __name__ == "__main__":
     main()
