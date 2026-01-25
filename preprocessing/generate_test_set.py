@@ -16,8 +16,8 @@ import numpy as np
 import argparse
 import logging
 # IMPORTS FROM YOUR ORIGINAL SCRIPT
-# Assumes you saved your script as 'preprocess_core.py'
-from preprocess_core import parse_csv, create_windows, get_config, NAStatistics
+# Assumes you saved your script as 'CAN_preprocess.py'
+from CAN_preprocess import parse_csv, create_windows, get_config, NAStatistics
 
 # --- LOGGING ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(TEST)s - %(message)s')
@@ -127,7 +127,7 @@ if __name__ == "__main__":
 
     # Reuse constants from the core script
     # We import these to ensure window size matches exactly what the model expects
-    from preprocess_core import WINDOW_SIZE, STRIDE
+    from CAN_preprocess import WINDOW_SIZE, STRIDE
 
     print(f"\n{'='*60}")
     print(f"GENERATING TEST SET (Step 2)")
