@@ -46,7 +46,7 @@ from models.baselines import get_baseline_model
 from models.lss_mamba import LSS_CAN_Mamba
 
 
-def evaluate_model(model, data_loader, device, threshold=0.5):
+def evaluate_model(model, data_loader, device, threshold=0.0100):
     """
     Evaluate a model on the given data loader.
     
